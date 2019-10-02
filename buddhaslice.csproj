@@ -16,4 +16,9 @@
         <Optimize>false</Optimize>
         <DefineConstants>DEBUG;TRACE</DefineConstants>
     </PropertyGroup>
+    <ItemGroup>
+      <None Update="mask.png">
+        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      </None>
+    </ItemGroup>
 </Project>

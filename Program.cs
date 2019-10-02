@@ -18,30 +18,39 @@ namespace buddhaslice
     public static class Program
     {
 #if DEBUG
-        public const int IMG_WIDTH = 1920;
-        public const int IMG_HEIGHT = 1080;
-        public const int MAX_ITER = 1000;
-        public const int CORES = 16;
+        public const int IMG_WIDTH = 1920 * 2;
+        public const int IMG_HEIGHT = 1080 * 2;
+        public const int MAX_ITER = 10000;
+        public const int THREADS = 256;
+        public const int CORES = 8;
         public const int DPP = 3;
 #else
         public const int IMG_WIDTH = 19_200;
         public const int IMG_HEIGHT = 10_800;
-        public const int MAX_ITER = 10_000;
+        public const int MAX_ITER = 5000_0;
+        public const int THREADS = 1280;
         public const int CORES = 8;
         public const int DPP = 5;
 #endif
-        public const int THREADS = 1280;
-        public const int SLICE_LEVEL = 0;
+        public const int SLICE_LEVEL = 8;
 
         public const int REPORTER_INTERVAL_MS = 500;
-        public const int SNAPSHOT_INTERVAL_MS = 240_000;
+        public const int SNAPSHOT_INTERVAL_MS = 120_000;
 
+        public const string PATH_MASK = "mask.png";
+        public const string PATH_OUTPUT_DAT = "render.dat";
+        public const string PATH_OUTPUT_IMG = "render.png";
+        public const string PATH_OUTPUT_IMG_COLORED = "render-col.png";
+
+        public const int THRESHOLD__B_G = 40;
+        public const int THRESHOLD__G_R = 300;
 
         #region PRIVATE FIELDS
 
         // indexing: [x, y]
-        private static readonly int[,] _image = new int[IMG_WIDTH, IMG_HEIGHT];
+        private static readonly (int Iterations_R, int Iterations_B, int Iterations_G)[] _image = new (int, int, int)[IMG_WIDTH * IMG_HEIGHT];
         private static readonly double[] _progress = new double[THREADS];
+        private static bool[,] _mask;
         private static bool _isrunning = true;
 
         #endregion
@@ -61,13 +70,14 @@ RENDER SETTINGS:
     SLICE LEVEL: {SLICE_LEVEL}
 
 ");
+            LoadMask();
 
             await Task.Factory.StartNew(ProgressReporterTask);
             await CreateRenderTask();
 
             _isrunning = false;
 
-            SaveImage();
+            SaveSnapshot();
         }
 
         private static async Task CreateRenderTask()
@@ -110,7 +120,7 @@ RENDER SETTINGS:
                     Console.WriteLine();
                     print($"SAVING SNAPSHOT ....\n");
 
-                    SaveImage();
+                    SaveSnapshot();
                     sw_save.Restart();
                 }
                 else
@@ -126,19 +136,35 @@ RENDER SETTINGS:
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void Render(int rank)
         {
-            const int x_pixels_total = IMG_WIDTH * DPP;
-            const int x_pixels_per_thread = x_pixels_total / THREADS;
-            int steps = rank < THREADS - 1 ? x_pixels_per_thread : x_pixels_total - (THREADS - 1) * x_pixels_per_thread;
+            const int X_PX_PER_THREAD = IMG_WIDTH / THREADS;
+            int xsteps = rank < THREADS - 1 ? X_PX_PER_THREAD : IMG_WIDTH - X_PX_PER_THREAD * (THREADS - 1);
+            int w_mask = _mask.GetLength(0);
+            int h_mask = _mask.GetLength(1);
 
-            for (int x = 0; x < steps; ++x)
+            for (int px_rel = 0; px_rel < xsteps; ++px_rel)
             {
-                double x_abs = x + rank * x_pixels_per_thread;
-                double re = 3.5 * x_abs / x_pixels_total - 2.5;
+                int px = px_rel + rank * X_PX_PER_THREAD;
+                int px_mask = (int)((double)px / IMG_WIDTH * w_mask);
 
-                for (double im = -1; im < 1; im += 2.0 / IMG_HEIGHT / DPP)
-                    Calculate(new Complex(re, im));
+                for (int x_dpp = 0; x_dpp < DPP; ++x_dpp)
+                {
+                    double re = 3.5 * (px * DPP + x_dpp) / IMG_WIDTH / DPP - 2.5;
 
-                _progress[rank] = (double)x / steps;
+                    for (int py = 0; py < IMG_HEIGHT; ++py)
+                    {
+                        int py_mask = (int)((double)py / IMG_HEIGHT * h_mask);
+
+                        if (_mask[px_mask, py_mask])
+                            for (int y_dpp = 0; y_dpp < DPP; ++y_dpp)
+                            {
+                                double im = 2d * (py * DPP + y_dpp) / IMG_HEIGHT / DPP - 1;
+
+                                Calculate(new Complex(re, im));
+                            }
+                    }
+                }
+
+                _progress[rank] = (double)px_rel / xsteps;
             }
         }
 
@@ -168,58 +194,79 @@ RENDER SETTINGS:
 
                 if (x_idx >= 0 && x_idx < IMG_WIDTH &&
                     y_idx >= 0 && y_idx < IMG_HEIGHT)
-                    _image[x_idx, y_idx] = iter;
+                {
+                    long idx = y_idx * IMG_WIDTH + x_idx;
+
+                    if (iter > THRESHOLD__G_R + THRESHOLD__B_G)
+                        _image[idx].Iterations_R += iter - THRESHOLD__G_R - THRESHOLD__B_G;
+                    
+                    if (iter > THRESHOLD__B_G)
+                        _image[idx].Iterations_G += Math.Min(iter, THRESHOLD__G_R) - THRESHOLD__B_G;
+
+                    _image[idx].Iterations_B += Math.Min(iter, THRESHOLD__B_G) - 5;
+                }
             }
         }
 
         #endregion
 
-        private static unsafe void SaveImage()
+        private static unsafe void LoadMask()
         {
-            /*
-             * EXPLANATION:
-             *  render-200.png      escape time [0..200] mapped to 8bit grayscale
-             *  render-real.png     escape time [0..MAX_ITER] mapped to 8bit grayscale
-             *  render-int32.dat    raw escape time
-             */
+            using Bitmap mask = (Bitmap)Image.FromFile(PATH_MASK);
+            int w = mask.Width;
+            int h = mask.Height;
 
-            using var bmp1 = new Bitmap(IMG_WIDTH, IMG_HEIGHT);
-            using var bmp2 = new Bitmap(IMG_WIDTH, IMG_HEIGHT);
-            var dat1 = bmp1.LockBits(new Rectangle(0, 0, IMG_WIDTH, IMG_HEIGHT), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
-            var dat2 = bmp2.LockBits(new Rectangle(0, 0, IMG_WIDTH, IMG_HEIGHT), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
-            uint* ptr1 = (uint*)dat1.Scan0;
-            uint* ptr2 = (uint*)dat2.Scan0;
+            _mask = new bool[w, h];
+
+            BitmapData dat = mask.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadWrite, PixelFormat.Format24bppRgb);
+            byte* ptr = (byte*)dat.Scan0;
+
+            Parallel.For(0, w * h, i => _mask[i % w, i / w] = ((double)ptr[i * 3 + 0] + ptr[i * 3 + 1] + ptr[i * 3 + 2]) > 0);
+
+            mask.UnlockBits(dat);
+        }
+
+        private static unsafe void SaveSnapshot()
+        {
+            using var bmp_gray = new Bitmap(IMG_WIDTH, IMG_HEIGHT);
+            using var bmp_color = new Bitmap(IMG_WIDTH, IMG_HEIGHT);
+            var dat_gray = bmp_gray.LockBits(new Rectangle(0, 0, IMG_WIDTH, IMG_HEIGHT), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+            var dat_color = bmp_color.LockBits(new Rectangle(0, 0, IMG_WIDTH, IMG_HEIGHT), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+            var ptr_gray = (uint*)dat_gray.Scan0;
+            var ptr_color = (uint*)dat_color.Scan0;
+            int max(params int[] v) => v.Max();
+
+            double brightest = 6000 / Math.Sqrt(_image.Max(pixel => max(pixel.Iterations_B, pixel.Iterations_G, pixel.Iterations_R)));
 
             Parallel.For(0, IMG_WIDTH * IMG_HEIGHT, idx =>
             {
-                byte g1 = (byte)Math.Min(_image[idx % IMG_WIDTH, idx / IMG_WIDTH] * 1.275, 255);
-                byte g2 = (byte)(_image[idx % IMG_WIDTH, idx / IMG_WIDTH] * 255d / MAX_ITER);
+                double r = Math.Sqrt(_image[idx].Iterations_R) * brightest;
+                double g = Math.Sqrt(_image[idx].Iterations_G) * brightest;
+                double b = Math.Sqrt(_image[idx].Iterations_B) * brightest;
 
-                ptr1[idx] = 0xff000000
-                          | ((uint)g1 << 16)
-                          | ((uint)g1 << 8)
-                          | g1;
+                uint clamp(double v) => (uint)Math.Max(0, Math.Min(v, 255));
 
-                ptr2[idx] = 0xff000000
-                          | ((uint)g2 << 16)
-                          | ((uint)g2 << 8)
-                          | g2;
+                ptr_gray[idx] = 0xff000000
+                          | (clamp(r) << 16)
+                          | (clamp(g) << 8)
+                          | clamp(b);
             });
 
-            bmp1.UnlockBits(dat1);
-            bmp2.UnlockBits(dat2);
-            bmp1.Save("render-200.png");
-            bmp2.Save("render-real.png");
+            bmp_gray.UnlockBits(dat_gray);
+            bmp_gray.Save(PATH_OUTPUT_IMG);
 
-            using var fs = new FileStream("render-int32.dat", FileMode.Create, FileAccess.Write, FileShare.Read);
+            using var fs = new FileStream(PATH_OUTPUT_DAT, FileMode.Create, FileAccess.Write, FileShare.Read);
             using var wr = new BinaryWriter(fs);
 
             wr.Write(IMG_WIDTH);
             wr.Write(IMG_HEIGHT);
 
-            for (int y = 0; y < IMG_HEIGHT; ++y)
-                for (int x = 0; x < IMG_WIDTH; ++x)
-                    wr.Write(_image[x, y]);
+            for (int i = 0; i < IMG_WIDTH * IMG_HEIGHT; ++i)
+            {
+                wr.Write(_image[i].Iterations_R);
+                wr.Write(_image[i].Iterations_G);
+                wr.Write(_image[i].Iterations_B);
+            }
         }
     }
 }
