@@ -25,15 +25,15 @@ namespace buddhaslice
         public const ulong IMG_HEIGHT = 2160;
         public const int MAX_ITER = 5000;
         public const int THREADS = 256;
-        public const int CORES = 8;
-        public const int DPP = 5;
+        public const int CORES = 7;
+        public const int DPP = 3;
 #else
         public const ulong IMG_WIDTH = 19_200;
         public const ulong IMG_HEIGHT = 10_800;
         public const int MAX_ITER = 5000_0;
         public const int THREADS = 1280;
         public const int CORES = 8;
-        public const int DPP = 5;
+        public const int DPP = 1;
 #endif
         public const int SLICE_LEVEL = 8;
 
@@ -54,15 +54,13 @@ namespace buddhaslice
         private static BigFuckingAllocator<(uint Iterations_R, uint Iterations_B, uint Iterations_G)> _image;
         private static double[] _progress = new double[THREADS];
         private static bool[,] _mask;
+        private static bool _isrunning = true;
 
         #endregion
         #region ENTRY POINT / SCHEDULING / LOAD+SAVE
 
         public static async Task Main(string[] _)
         {
-            CancellationTokenSource cts = new CancellationTokenSource();
-            CancellationToken ct = cts.Token;
-
             Console.WriteLine($@"
 RENDER SETTINGS:
     WIDTH:       {IMG_WIDTH}px
@@ -75,17 +73,19 @@ RENDER SETTINGS:
 ");
             try
             {
-                await ProgressReporterTask(ct);
+                await Task.Factory.StartNew(ProgressReporterTask);
 
                 InitializeMaskAndImage();
 
-                await CreateRenderTask(ct);
+                await CreateRenderTask();
+
+                _isrunning = false;
 
                 SaveSnapshot();
             }
             catch (Exception ex)
             {
-                cts.Cancel();
+                _isrunning = false;
 
                 StringBuilder sb = new StringBuilder();
 
@@ -109,12 +109,11 @@ RENDER SETTINGS:
             }
         }
 
-        private static async Task CreateRenderTask(CancellationToken ct)
+        private static async Task CreateRenderTask()
         {
             ActionBlock<int> block = new ActionBlock<int>(Render, new ExecutionDataflowBlockOptions
             {
                 MaxDegreeOfParallelism = CORES,
-                CancellationToken = ct,
                 EnsureOrdered = false,
             });
 
@@ -126,7 +125,7 @@ RENDER SETTINGS:
             await block.Completion;
         }
 
-        private static async Task ProgressReporterTask(CancellationToken ct) => await Task.Factory.StartNew(async () =>
+        private static async void ProgressReporterTask()
         {
             Stopwatch sw_total = new Stopwatch();
             Stopwatch sw_report = new Stopwatch();
@@ -136,12 +135,17 @@ RENDER SETTINGS:
             sw_report.Start();
             sw_save.Start();
 
-            void print(string msg) => Console.Write($"{DateTime.Now:HH:mm:ss.ff}      ELAPSED: {sw_total.Elapsed:dd':'hh':'mm':'ss'.'fff}      {msg}");
+            do
+            {
+                TimeSpan elapsed = sw_total.Elapsed;
+                void print(string msg) => Console.Write($"TIME: {DateTime.Now:HH:mm:ss.ff}     ELAPSED: {elapsed:dd':'hh':'mm':'ss'.'fff}     {msg}");
 
-            while (ct.IsCancellationRequested)
                 if (sw_report.ElapsedMilliseconds >= REPORTER_INTERVAL_MS)
                 {
-                    print($"PROGRESS: {_progress.Sum() / THREADS * 100,6:F3}%\r");
+                    double progr = _progress.Sum() / THREADS;
+                    string est_total = progr < 1e-5 ? "∞" : $"{TimeSpan.FromMilliseconds(elapsed.TotalMilliseconds / progr) - elapsed:dd':'hh':'mm':'ss}";
+
+                    print($"REMAINING: {est_total}     PROGRESS: {progr * 100,6:F3}%\r");
 
                     sw_report.Restart();
                 }
@@ -154,11 +158,12 @@ RENDER SETTINGS:
                     sw_save.Restart();
                 }
                 else
-                    await Task.Delay(REPORTER_INTERVAL_MS / 3, ct);
+                    await Task.Delay(REPORTER_INTERVAL_MS / 3);
+            }   
+            while (_isrunning);
 
-            Console.WriteLine();
-            print("---------- FINISHED RENDERING ----------\n\n");
-        }, ct);
+            Console.WriteLine("\n---------- FINISHED RENDERING ----------\n");
+        }
 
         private static unsafe void InitializeMaskAndImage()
         {
@@ -180,8 +185,6 @@ RENDER SETTINGS:
 
         private static unsafe void SaveWholePNG()
         {
-            Console.WriteLine("Saving PNG ...");
-
             int w = (int)IMG_WIDTH;
             int h = (int)IMG_HEIGHT;
             using Bitmap bmp_gray = new Bitmap(w, h);
@@ -226,8 +229,6 @@ RENDER SETTINGS:
         {
             if (IMG_WIDTH * IMG_HEIGHT < 536_870_912) // 512 Megapixel limit
                 SaveWholePNG();
-
-            Console.WriteLine("Saving raw data ...");
 
             using FileStream fs = new FileStream(PATH_OUTPUT_DAT, FileMode.Create, FileAccess.Write, FileShare.Read);
             using BufferedStream bf = new BufferedStream(fs);
