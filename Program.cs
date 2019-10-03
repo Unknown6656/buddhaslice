@@ -33,17 +33,18 @@ namespace buddhaslice
         public const int MAX_ITER = 5000_0;
         public const int THREADS = 1280;
         public const int CORES = 8;
-        public const int DPP = 2;
+        public const int DPP = 5;
 #endif
         public const int SLICE_LEVEL = 8;
 
         public const int REPORTER_INTERVAL_MS = 500;
         public const int SNAPSHOT_INTERVAL_MS = 120_000;
 
+        public const int MAX_OUTPUT_IMG_SIZE = 536_870_000; // ~512 Megapixel
+
         public const string PATH_MASK = "mask.png";
         public const string PATH_OUTPUT_DAT = "render.dat";
-        public const string PATH_OUTPUT_IMG = "render.png";
-        public const string PATH_OUTPUT_IMG_COLORED = "render-col.png";
+        public const string PATH_OUTPUT_IMG = "render--tile{0}{1}.png"; // {0} and {1} are placeholders for the tile indices
 
         public const int THRESHOLD__B_G = 40;
         public const int THRESHOLD__G_R = 300;
@@ -84,6 +85,7 @@ RENDER SETTINGS:
                 SaveSnapshot();
             }
             catch (Exception ex)
+            when (!Debugger.IsAttached)
             {
                 _isrunning = false;
 
@@ -186,20 +188,15 @@ RENDER SETTINGS:
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static unsafe void SaveWholePNG()
+        private static unsafe void SaveTiledPNG()
         {
-            int w = (int)IMG_WIDTH;
-            int h = (int)IMG_HEIGHT;
-            using Bitmap bmp_gray = new Bitmap(w, h);
-            using Bitmap bmp_color = new Bitmap(w, h);
-            BitmapData dat_gray = bmp_gray.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
-            BitmapData dat_color = bmp_color.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
-            uint* ptr_gray = (uint*)dat_gray.Scan0;
-            uint* ptr_color = (uint*)dat_color.Scan0;
+            int tiles = 1;
+
+            while (IMG_WIDTH * IMG_HEIGHT / (ulong)(tiles * tiles) > MAX_OUTPUT_IMG_SIZE)
+                ++tiles;
 
             int max(params int[] v) => v.Max();
             uint clamp(double v) => (uint)Math.Max(0, Math.Min(v, 255));
-
             double brightest = 0;
 
             for (ulong i = 0; i < IMG_WIDTH * IMG_HEIGHT; ++i)
@@ -211,28 +208,27 @@ RENDER SETTINGS:
 
             brightest = 6000 / Math.Sqrt(brightest);
 
-            Parallel.For(0, w * h, i =>
+            Bitmap[,] bmp = new ImageTiler<(int r, int g, int b)>(_image, pixel =>
             {
-                var pixel = _image[(ulong)i];
-                double r = Math.Sqrt(pixel->Iterations_R) * brightest;
-                double g = Math.Sqrt(pixel->Iterations_G) * brightest;
-                double b = Math.Sqrt(pixel->Iterations_B) * brightest;
+                double r = Math.Sqrt(pixel.r) * brightest;
+                double g = Math.Sqrt(pixel.g) * brightest;
+                double b = Math.Sqrt(pixel.b) * brightest;
 
-                ptr_gray[i] = 0xff000000
-                            | (clamp(r) << 16)
-                            | (clamp(g) << 8)
-                            | clamp(b);
-            });
+                return 0xff000000u
+                     | (clamp(r) << 16)
+                     | (clamp(g) << 8)
+                     | clamp(b);
+            }).GenerateTiles((tiles, tiles), ((int)IMG_WIDTH, (int)IMG_HEIGHT));
 
-            bmp_gray.UnlockBits(dat_gray);
-            bmp_gray.Save(PATH_OUTPUT_IMG);
+            for (int x = 0; x < tiles; ++x)
+                for (int y = 0; y < tiles; ++y)
+                    bmp[x, y].Save(string.Format(PATH_OUTPUT_IMG, x, y), ImageFormat.Png);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void SaveSnapshot()
         {
-            if (IMG_WIDTH * IMG_HEIGHT < 536_870_912) // 512 Megapixel limit
-                SaveWholePNG();
+            SaveTiledPNG();
 
             using FileStream fs = new FileStream(PATH_OUTPUT_DAT, FileMode.Create, FileAccess.Write, FileShare.Read);
             using BufferedStream bf = new BufferedStream(fs);
@@ -347,7 +343,7 @@ RENDER SETTINGS:
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => idx < ItemCount ? _slices[idx / (ulong)_slicesize] + idx % (ulong)_slicesize
-                                    : throw new ArgumentOutOfRangeException(nameof(idx), $"The index must be smaller than {ItemCount}.");
+                                    : throw new ArgumentOutOfRangeException(nameof(idx), idx, $"The index must be smaller than {ItemCount}.");
         }
 
         static BigFuckingAllocator()
@@ -414,5 +410,57 @@ RENDER SETTINGS:
         }
 
         public static implicit operator BigFuckingAllocator<T>(T[] array) => new BigFuckingAllocator<T>(array);
+    }
+
+    public sealed class ImageTiler<T>
+        where T : unmanaged
+    {
+        private readonly BigFuckingAllocator<T> _buffer;
+        private readonly Func<T, uint> _pixel_translator;
+
+
+        /// <param name="pixel_translator">
+        /// Translation function : T --> uint32  where uint32 represents the ARGB-pixel value associated with the given instance of T.
+        /// </param>
+        public ImageTiler(BigFuckingAllocator<T> buffer, Func<T, uint> pixel_translator)
+        {
+            _buffer = buffer;
+            _pixel_translator = pixel_translator;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private unsafe Bitmap GenerateTile(int xoffs, int yoffs, int width, int height, int total_width)
+        {
+            Bitmap bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            BitmapData dat = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadWrite, bmp.PixelFormat);
+            uint* ptr = (uint*)dat.Scan0;
+
+            Parallel.For(0, bmp.Width * bmp.Height, i =>
+            {
+                int x = xoffs + i % width;
+                int y = yoffs + i / width;
+                ulong idx = (ulong)y * (ulong)total_width + (ulong)x;
+
+                ptr[i] = _pixel_translator(*_buffer[idx]);
+            });
+
+            bmp.UnlockBits(dat);
+
+            return bmp;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public unsafe Bitmap[,] GenerateTiles((int x, int y) tile_count, (int width, int heigt) total_pixels)
+        {
+            Bitmap[,] bitmaps = new Bitmap[tile_count.x, tile_count.y];
+            int w = total_pixels.width / tile_count.x;
+            int h = total_pixels.heigt / tile_count.y;
+
+            for (int x = 0; x < tile_count.x; ++x)
+                for (int y = 0; y < tile_count.y; ++y)
+                    bitmaps[x, y] = GenerateTile(x * w, y * h, w, h, total_pixels.width);
+
+            return bitmaps;
+        }
     }
 }
