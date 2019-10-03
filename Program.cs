@@ -25,7 +25,7 @@ namespace buddhaslice
         public const ulong IMG_HEIGHT = 2160;
         public const int MAX_ITER = 10000;
         public const int THREADS = 256;
-        public const int CORES = 7;
+        public const int CORES = 8;
         public const int DPP = 3;
 #else
         public const ulong IMG_WIDTH = 19_200;
@@ -52,7 +52,7 @@ namespace buddhaslice
         #region PRIVATE FIELDS
 
         // indexing: [y * WIDTH + x]
-        private static BigFuckingAllocator<(int Iterations_R, int Iterations_B, int Iterations_G)> _image;
+        private static BigFuckingAllocator<(int Iterations_R, int Iterations_G, int Iterations_B)> _image;
         private static double[] _progress = new double[THREADS];
         private static bool[,] _mask;
         private static bool _isrunning = true;
