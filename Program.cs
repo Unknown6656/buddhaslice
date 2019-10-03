@@ -23,7 +23,7 @@ namespace buddhaslice
 #if DEBUG
         public const ulong IMG_WIDTH = 3840;
         public const ulong IMG_HEIGHT = 2160;
-        public const int MAX_ITER = 5000;
+        public const int MAX_ITER = 10000;
         public const int THREADS = 256;
         public const int CORES = 7;
         public const int DPP = 3;
@@ -33,7 +33,7 @@ namespace buddhaslice
         public const int MAX_ITER = 5000_0;
         public const int THREADS = 1280;
         public const int CORES = 8;
-        public const int DPP = 5;
+        public const int DPP = 2;
 #endif
         public const int SLICE_LEVEL = 8;
 
@@ -51,7 +51,7 @@ namespace buddhaslice
         #region PRIVATE FIELDS
 
         // indexing: [y * WIDTH + x]
-        private static BigFuckingAllocator<(uint Iterations_R, uint Iterations_B, uint Iterations_G)> _image;
+        private static BigFuckingAllocator<(int Iterations_R, int Iterations_B, int Iterations_G)> _image;
         private static double[] _progress = new double[THREADS];
         private static bool[,] _mask;
         private static bool _isrunning = true;
@@ -169,7 +169,7 @@ RENDER SETTINGS:
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void InitializeMaskAndImage()
         {
-            _image = new BigFuckingAllocator<(uint, uint, uint)>(IMG_WIDTH * IMG_HEIGHT);
+            _image = new BigFuckingAllocator<(int, int, int)>(IMG_WIDTH * IMG_HEIGHT);
 
             using Bitmap mask = (Bitmap)Image.FromFile(PATH_MASK);
             int w = mask.Width;
@@ -197,7 +197,7 @@ RENDER SETTINGS:
             uint* ptr_gray = (uint*)dat_gray.Scan0;
             uint* ptr_color = (uint*)dat_color.Scan0;
 
-            uint max(params uint[] v) => v.Max();
+            int max(params int[] v) => v.Max();
             uint clamp(double v) => (uint)Math.Max(0, Math.Min(v, 255));
 
             double brightest = 0;
@@ -293,7 +293,7 @@ RENDER SETTINGS:
         {
             Complex z = c;
             Complex q;
-            uint iter = SLICE_LEVEL;
+            int iter = SLICE_LEVEL;
 
             for (int i = 0; i < SLICE_LEVEL; ++i)
                 z = z * z + c;
@@ -309,13 +309,13 @@ RENDER SETTINGS:
 
             if (iter < MAX_ITER)
             {
-                ulong x_idx = (ulong)((q.Real + 2.5) * IMG_WIDTH / 3.5);
-                ulong y_idx = (ulong)((q.Imaginary + 1) * IMG_HEIGHT / 2);
+                double x_idx = (q.Real + 2.5) * IMG_WIDTH / 3.5;
+                double y_idx = (q.Imaginary + 1) * IMG_HEIGHT / 2;
 
                 if (x_idx >= 0 && x_idx < IMG_WIDTH &&
                     y_idx >= 0 && y_idx < IMG_HEIGHT)
                 {
-                    ulong idx = y_idx * IMG_WIDTH + x_idx;
+                    ulong idx = (ulong)y_idx * IMG_WIDTH + (ulong)x_idx;
 
                     if (iter > THRESHOLD__G_R + THRESHOLD__B_G)
                         _image[idx]->Iterations_R += iter - THRESHOLD__G_R - THRESHOLD__B_G;
@@ -330,10 +330,6 @@ RENDER SETTINGS:
 
         #endregion
     }
-
-
-
-
 
     public unsafe readonly struct BigFuckingAllocator<T>
         where T : unmanaged
