@@ -33,7 +33,7 @@ namespace buddhaslice
         public const int MAX_ITER = 5000_0;
         public const int THREADS = 1280;
         public const int CORES = 8;
-        public const int DPP = 1;
+        public const int DPP = 5;
 #endif
         public const int SLICE_LEVEL = 8;
 
@@ -125,6 +125,7 @@ RENDER SETTINGS:
             await block.Completion;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static async void ProgressReporterTask()
         {
             Stopwatch sw_total = new Stopwatch();
@@ -165,6 +166,7 @@ RENDER SETTINGS:
             Console.WriteLine("\n---------- FINISHED RENDERING ----------\n");
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void InitializeMaskAndImage()
         {
             _image = new BigFuckingAllocator<(uint, uint, uint)>(IMG_WIDTH * IMG_HEIGHT);
@@ -183,6 +185,7 @@ RENDER SETTINGS:
             mask.UnlockBits(dat);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void SaveWholePNG()
         {
             int w = (int)IMG_WIDTH;
@@ -225,6 +228,7 @@ RENDER SETTINGS:
             bmp_gray.Save(PATH_OUTPUT_IMG);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void SaveSnapshot()
         {
             if (IMG_WIDTH * IMG_HEIGHT < 536_870_912) // 512 Megapixel limit
@@ -357,6 +361,23 @@ RENDER SETTINGS:
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public BigFuckingAllocator(T[] array)
+            : this((ulong)array.LongLength)
+        {
+            for (long i = 0; i < array.LongLength; ++i)
+                *this[(ulong)i] = array[i];
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public BigFuckingAllocator(T* pointer, int count)
+        {
+            ItemCount = (ulong)count;
+            _slicesize = count;
+            _slicecount = 0;
+            _slices = new[] { pointer };
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public BigFuckingAllocator(ulong item_count)
         {
             ItemCount = item_count;
@@ -395,5 +416,7 @@ RENDER SETTINGS:
 
             return iterator(i => sl[i / sz][i % sz]);
         }
+
+        public static implicit operator BigFuckingAllocator<T>(T[] array) => new BigFuckingAllocator<T>(array);
     }
 }
