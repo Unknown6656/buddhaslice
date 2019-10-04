@@ -28,17 +28,17 @@ namespace buddhaslice
         public const int CORES = 8;
         public const int DPP = 3;
 #else
-        public const ulong IMG_WIDTH = 19_200;
-        public const ulong IMG_HEIGHT = 10_800;
-        public const int MAX_ITER = 5000_0;
+        public const ulong IMG_WIDTH = 28_800;
+        public const ulong IMG_HEIGHT = 16_200;
+        public const int MAX_ITER = 50_000;
         public const int THREADS = 1280;
         public const int CORES = 8;
-        public const int DPP = 5;
+        public const int DPP = 32;
 #endif
         public const int SLICE_LEVEL = 8;
 
         public const int REPORTER_INTERVAL_MS = 500;
-        public const int SNAPSHOT_INTERVAL_MS = 120_000;
+        public const int SNAPSHOT_INTERVAL_MS = 360_000;
 
         public const int MAX_OUTPUT_IMG_SIZE = 536_870_000; // ~512 Megapixel
 
@@ -52,7 +52,7 @@ namespace buddhaslice
         #region PRIVATE FIELDS
 
         // indexing: [y * WIDTH + x]
-        private static BigFuckingAllocator<(int Iterations_R, int Iterations_G, int Iterations_B)> _image;
+        private static BigFuckingAllocator<(int Iterations_R, short Iterations_G, short Iterations_B)> _image;
         private static double[] _progress = new double[THREADS];
         private static bool[,] _mask;
         private static bool _isrunning = true;
@@ -82,7 +82,8 @@ RENDER SETTINGS:
 
                 _isrunning = false;
 
-                SaveSnapshot();
+                SaveTiledPNG();
+                SaveRaw();
             }
             catch (Exception ex)
             when (!Debugger.IsAttached)
@@ -157,7 +158,7 @@ RENDER SETTINGS:
                     Console.WriteLine();
                     print($"SAVING SNAPSHOT ....\n");
 
-                    SaveSnapshot();
+                    SaveTiledPNG();
                     sw_save.Restart();
                 }
                 else
@@ -171,7 +172,7 @@ RENDER SETTINGS:
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void InitializeMaskAndImage()
         {
-            _image = new BigFuckingAllocator<(int, int, int)>(IMG_WIDTH * IMG_HEIGHT);
+            _image = new BigFuckingAllocator<(int, short, short)>(IMG_WIDTH * IMG_HEIGHT);
 
             using Bitmap mask = (Bitmap)Image.FromFile(PATH_MASK);
             int w = mask.Width;
@@ -208,7 +209,7 @@ RENDER SETTINGS:
 
             brightest = 6000 / Math.Sqrt(brightest);
 
-            Bitmap[,] bmp = new ImageTiler<(int r, int g, int b)>(_image, pixel =>
+            Bitmap[,] bmp = new ImageTiler<(int r, short g, short b)>(_image, pixel =>
             {
                 double r = Math.Sqrt(pixel.r) * brightest;
                 double g = Math.Sqrt(pixel.g) * brightest;
@@ -222,13 +223,17 @@ RENDER SETTINGS:
 
             for (int x = 0; x < tiles; ++x)
                 for (int y = 0; y < tiles; ++y)
+                {
+                    Console.WriteLine($"Saving image tile (x,y) = ({x},{y})");
+
                     bmp[x, y].Save(string.Format(PATH_OUTPUT_IMG, x, y), ImageFormat.Png);
+                }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static unsafe void SaveSnapshot()
+        private static unsafe void SaveRaw()
         {
-            SaveTiledPNG();
+            Console.WriteLine("Saving raw memory data.");
 
             using FileStream fs = new FileStream(PATH_OUTPUT_DAT, FileMode.Create, FileAccess.Write, FileShare.Read);
             using BufferedStream bf = new BufferedStream(fs);
@@ -317,9 +322,9 @@ RENDER SETTINGS:
                         _image[idx]->Iterations_R += iter - THRESHOLD__G_R - THRESHOLD__B_G;
                     
                     if (iter > THRESHOLD__B_G)
-                        _image[idx]->Iterations_G += Math.Min(iter, THRESHOLD__G_R) - THRESHOLD__B_G;
+                        _image[idx]->Iterations_G += (short)(Math.Min(iter, THRESHOLD__G_R) - THRESHOLD__B_G);
 
-                    _image[idx]->Iterations_B += Math.Max(0, Math.Min(iter - 5, THRESHOLD__B_G));
+                    _image[idx]->Iterations_B += (short)Math.Max(0, Math.Min(iter - 5, THRESHOLD__B_G));
                 }
             }
         }
