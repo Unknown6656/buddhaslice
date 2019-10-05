@@ -1,0 +1,35 @@
+{
+    "path_mask": "mask.png",
+    "path_raw": "memory.dump",
+    "path_out": "render--tile-{0}{1}.png" /* (0) and (1) are placeholders for the tile indices */,
+    "bounds": {
+        "image": {
+            "left": -2,
+            "right": 0.75,
+            "top": -1.1,
+            "bottom": 1.1
+        },
+        "mask": {
+            "left": -2,
+            "right": 0.75,
+            "top": -1.1,
+            "bottom": 1.1
+        }
+    },
+    "width": 19200,
+    "height": 15840,
+    "max_iter": 5000,
+    "max_image_size": 536870000 /* ~512 Megapixel limit */,
+    "slice": 8,
+    "dpp": 8,
+    "threads": 40,
+    "cores": 7,
+    "threshold_g": 40,
+    "threshold_r": 300,
+    "report_interval_ms": 750,
+    "export": {
+        "interval_ms": 600000,
+        "raw": false,
+        "png": true
+    }
+}

@@ -1,5 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
     <PropertyGroup>
+        <AssemblyFileVersion>1.0.*</AssemblyFileVersion>
         <OutputType>Exe</OutputType>
         <TargetFramework>netcoreapp3.0</TargetFramework>
         <UseWindowsForms>true</UseWindowsForms>
@@ -7,6 +8,7 @@
         <PlatformTarget>x64</PlatformTarget>
         <OutputPath>bin</OutputPath>
         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+        <Deterministic>false</Deterministic>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Configuration)'=='Release'">
         <Optimize>true</Optimize>
@@ -17,7 +19,13 @@
         <DefineConstants>DEBUG;TRACE</DefineConstants>
     </PropertyGroup>
     <ItemGroup>
+      <PackageReference Include="Newtonsoft.Json" Version="12.0.2" />
+    </ItemGroup>
+    <ItemGroup>
       <None Update="mask.png">
+        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      </None>
+      <None Update="settings.json">
         <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       </None>
     </ItemGroup>

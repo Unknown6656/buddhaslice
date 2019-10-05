@@ -1,4 +1,6 @@
-﻿using System.Runtime.CompilerServices;
+﻿#nullable enable
+
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -99,6 +101,20 @@ namespace buddhaslice
         {
             for (int i = 0; i < _slicecount; ++i)
                 Marshal.FreeHGlobal((IntPtr)_slices[i]);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public readonly void AggressivelyClaimAllTheFuckingMemory(T value = default)
+        {
+            for (int i = 0; i < _slicecount; ++i)
+            {
+                T* ptr = _slices[i];
+                byte* bptr = (byte*)ptr;
+                int len = i < _slices.Length - 1 ? _slicesize : (int)(ItemCount - (ulong)i * (ulong)_slicesize);
+
+                Parallel.For(0, len * sizeof(T), j => bptr[j] = 0xff);
+                Parallel.For(0, len, j => ptr[j] = value);
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
