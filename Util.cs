@@ -14,7 +14,7 @@ namespace buddhaslice
     public unsafe readonly struct BigFuckingAllocator<T>
         where T : unmanaged
     {
-        public const int MAX_SLICE_SIZE = 128 * 1024 * 1024;
+        public const int MAX_SLICE_SIZE = 256 * 1024 * 1024;
 
         private readonly int _slicecount;
         private readonly int _slicesize;
@@ -100,7 +100,14 @@ namespace buddhaslice
         public readonly void Dispose()
         {
             for (int i = 0; i < _slicecount; ++i)
-                Marshal.FreeHGlobal((IntPtr)_slices[i]);
+                try
+                {
+                    Marshal.FreeHGlobal((IntPtr)_slices[i]);
+                }
+                catch
+                {
+                    _slices[i] = null;
+                }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

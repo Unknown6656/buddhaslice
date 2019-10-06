@@ -18,18 +18,20 @@
     },
     "width": 19200,
     "height": 15840,
-    "max_iter": 5000,
+    "max_iter": 10000,
     "max_image_size": 536870000 /* ~512 Megapixel limit */,
-    "slice": 8,
+    "slice": 1,
     "dpp": 8,
-    "threads": 40,
+    "threads": 200,
     "cores": 7,
     "threshold_g": 40,
     "threshold_r": 300,
-    "report_interval_ms": 750,
+    "claim_memory": false,
+    "report_interval_ms": 250,
     "export": {
         "interval_ms": 600000,
         "raw": false,
-        "png": true
+        "png": true,
+        "raw_at_end": false
     }
 }
