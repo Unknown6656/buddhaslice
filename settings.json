@@ -16,22 +16,24 @@
             "bottom": 1.1
         }
     },
-    "width": 19200,
-    "height": 15840,
-    "max_iter": 10000,
+     "width": 19200,
+     "height": 15840,
+    //"width": 3840,
+    //"height": 3168,
+    "max_iter": 4000,
     "max_image_size": 536870000 /* ~512 Megapixel limit */,
-    "slice": 1,
+    "slice": 12,
     "dpp": 8,
-    "threads": 200,
-    "cores": 7,
+    "threads": 400,
+    "cores": 8,
     "threshold_g": 40,
     "threshold_r": 300,
     "claim_memory": false,
     "report_interval_ms": 250,
     "export": {
         "interval_ms": 600000,
-        "raw": false,
+        "raw": true,
         "png": true,
-        "raw_at_end": false
+        "raw_at_end": true
     }
 }
