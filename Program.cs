@@ -1,9 +1,13 @@
-﻿#nullable enable
+﻿#define COMPLETE_BUDDHA
+
+#nullable enable
 
 using System.Runtime.Intrinsics.X86;
 using System.Runtime.ExceptionServices;
 using System.Runtime.CompilerServices;
+using System.Runtime.Serialization;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading.Tasks.Dataflow;
 using System.Threading.Tasks;
 using System.Diagnostics;
@@ -17,7 +21,6 @@ using System.IO;
 using System;
 
 using Newtonsoft.Json;
-
 
 namespace buddhaslice
 {
@@ -53,13 +56,19 @@ namespace buddhaslice
         private static ExecutionDataflowBlockOptions? _options;
 
         // indexing: [y * WIDTH + x]
-        private static BigFuckingAllocator<(int Iterations_R, int Iterations_G, int Iterations_B)> _image;
+#if COMPLETE_BUDDHA
+        private static BigFuckingAllocator<(bool Computed, int Iterations)> _image;
+        private static Complex[,] _orbits;
+        private static int[] _orbit_indices;
+#else
+        private static BigFuckingAllocator<(bool Computed, int Iterations_R, int Iterations_G, int Iterations_B)> _image;
+#endif
         private static double[] _progress;
         private static bool[,] _mask;
         private static bool _isrunning = true;
 
         #endregion
-        #region ENTRY POINT / SCHEDULING / LOAD+SAVE
+        #region ENTRY POINT / SCHEDULING / ...
 
         public static async Task Main(string[] _)
         {
@@ -123,6 +132,10 @@ namespace buddhaslice
 
         private static async Task CreateRenderTask()
         {
+#if COMPLETE_BUDDHA
+            _orbits = new Complex[CORES, MAX_ITER];
+            _orbit_indices = Enumerable.Repeat(-1, CORES).ToArray();
+#endif
             ActionBlock<int> block = new ActionBlock<int>(Render, _options = new ExecutionDataflowBlockOptions
             {
                 MaxDegreeOfParallelism = CORES,
@@ -158,27 +171,27 @@ namespace buddhaslice
 
             Console.ForegroundColor = ConsoleColor.White;
             Console.WriteLine($@"  RENDER CONFIGURATION:
-        WIDTH:             {IMG_WIDTH:N0} px
-        HEIGHT:            {IMG_HEIGHT:N0} px
-        TOTAL PIXELS:      {IMG_HEIGHT * IMG_WIDTH:N0} px
-        TOTAL COMPLEX OPS: {IMG_HEIGHT * IMG_WIDTH * (ulong)(DPP * DPP * (MAX_ITER + SLICE_LEVEL)):N0}
-        ITERATIONS:        {MAX_ITER:N0}
-        THREADS:           {THREADS}
-        PIXELS PER THREAD: {IMG_HEIGHT * IMG_WIDTH / (ulong)THREADS:N0} px
-        CORES:             {CORES} (+ 1)
-        DPP:               {DPP}
-        SLICE LEVEL:       {SLICE_LEVEL}
-        SNAPSHOT INTERVAL: {SNAPSHOT_INTERVAL_MS / 1000d}s
-        MAX. IMAGE SIZE:   {MAX_OUTPUT_IMG_SIZE / 1024d:N2} kpx
-        MASK PATH:         ""{PATH_MASK}""
-        OUTPUT PNG PATH:   ""{PATH_OUTPUT_IMG}""
-        OUTPUT RAW PATH:   ""{PATH_OUTPUT_DAT}""
-        CLAIM MEMORY:      {CLAIM_MEM}
-        EXPORT PNG:        {EXPORT_PNG}
-        EXPORT RAW:        {EXPORT_RAW}
-        EXPORT RAW AT END: {EXPORT_RAW_AT_END}
-        THRESHOLD B -> G:  {THRESHOLD__B_G}
-        THRESHOLD G -> R:  {THRESHOLD__G_R}");
+       WIDTH:             {IMG_WIDTH:N0} px
+       HEIGHT:            {IMG_HEIGHT:N0} px
+       TOTAL PIXELS:      {IMG_HEIGHT * IMG_WIDTH:N0} px
+       TOTAL COMPLEX OPS: {IMG_HEIGHT * IMG_WIDTH * (ulong)(DPP * DPP * (MAX_ITER + SLICE_LEVEL)):N0}
+       ITERATIONS:        {MAX_ITER:N0}
+       THREADS:           {THREADS}
+       PIXELS PER THREAD: {IMG_HEIGHT * IMG_WIDTH / (ulong)THREADS:N0} px
+       CORES:             {CORES} (+ 1)
+       DPP:               {DPP}
+       SLICE LEVEL:       {SLICE_LEVEL}
+       SNAPSHOT INTERVAL: {SNAPSHOT_INTERVAL_MS / 1000d}s
+       MAX. IMAGE SIZE:   {MAX_OUTPUT_IMG_SIZE / 1024d:N2} kpx
+       MASK PATH:         ""{PATH_MASK}""
+       OUTPUT PNG PATH:   ""{PATH_OUTPUT_IMG}""
+       OUTPUT RAW PATH:   ""{PATH_OUTPUT_DAT}""
+       CLAIM MEMORY:      {CLAIM_MEM}
+       EXPORT PNG:        {EXPORT_PNG}
+       EXPORT RAW:        {EXPORT_RAW}
+       EXPORT RAW AT END: {EXPORT_RAW_AT_END}
+       THRESHOLD B -> G:  {THRESHOLD__B_G}
+       THRESHOLD G -> R:  {THRESHOLD__G_R}");
 
             int tmp = Console.CursorTop;
 
@@ -201,10 +214,10 @@ namespace buddhaslice
             Console.WriteLine("  THREADS:");
 
             int top_threads = Console.CursorTop;
-            int t_per_row = (WIDTH - 9) / 7;
-            (int l, int t) get_thread_pos(int rank) => (2 + (rank % t_per_row) * 7, top_threads + rank / t_per_row);
+            int t_per_row = (WIDTH - 12) / 7;
+            (int l, int t) get_thread_pos(int rank) => (6 + (rank % t_per_row) * 7, top_threads + rank / t_per_row);
 
-            Console.CursorTop = get_thread_pos(THREADS + 1).t + 2;
+            Console.CursorTop = get_thread_pos(THREADS + 1).t + 1;
             Console.ForegroundColor = ConsoleColor.Gray;
             Console.WriteLine(new string('═', WIDTH));
             Console.ForegroundColor = ConsoleColor.White;
@@ -221,9 +234,12 @@ namespace buddhaslice
             sw_save.Start();
 
             long max_mem = 0;
+            bool fin = false;
+            double oldp = 0;
+            int updatememory = 0;
 
             do
-                if(sw_save.ElapsedMilliseconds >= SNAPSHOT_INTERVAL_MS)
+                if (sw_save.ElapsedMilliseconds >= SNAPSHOT_INTERVAL_MS)
                 {
                     sw_save.Stop();
                     sw_save.Reset();
@@ -249,9 +265,6 @@ namespace buddhaslice
                     TimeSpan elapsed = sw_total.Elapsed;
                     double progr = _progress.Sum() / THREADS;
                     string est_rem = progr < 1e-5 ? "∞" : $"{TimeSpan.FromMilliseconds(elapsed.TotalMilliseconds / progr) - elapsed:dd':'hh':'mm':'ss}.00";
-                    long mem = Process.GetCurrentProcess().WorkingSet64;
-
-                    max_mem = Math.Max(mem, max_mem);
 
                     Console.CursorLeft = left_progress;
                     Console.CursorTop = top_progress;
@@ -261,14 +274,27 @@ namespace buddhaslice
                     Console.WriteLine($"ELAPSED TIME:               {elapsed:dd':'hh':'mm':'ss'.'ff}");
                     Console.CursorLeft = left_progress;
                     Console.WriteLine($"REMAINING TIME (ESTIMATED): {est_rem}");
-                    Console.CursorLeft = left_progress;
-                    Console.WriteLine($"CURRENT MEMORY FOOTPRINT:   {mem / 1048576d,11:N2} MB");
-                    Console.CursorLeft = left_progress;
-                    Console.WriteLine($"MAXIMUM MEMORY FOOTPRINT:   {max_mem / 1048576d,11:N2} MB");
+
+                    if (updatememory == 0)
+                    {
+                        long mem = Process.GetCurrentProcess().WorkingSet64;
+
+                        max_mem = Math.Max(mem, max_mem);
+
+                        Console.CursorLeft = left_progress;
+                        Console.WriteLine($"CURRENT MEMORY FOOTPRINT:   {mem / 1048576d,11:N2} MB");
+                        Console.CursorLeft = left_progress;
+                        Console.WriteLine($"MAXIMUM MEMORY FOOTPRINT:   {max_mem / 1048576d,11:N2} MB");
+                    }
+                    else
+                        Console.CursorTop += 2;
+
                     Console.CursorLeft = left_progress;
                     Console.WriteLine($"IMAGE SIZE:                 {_image.BinarySize / 1048576d,11:N2} MB");
                     Console.CursorLeft = left_progress;
                     Console.WriteLine($"TOTAL PROGRESS:             {progr * 100,11:N5} %");
+                    Console.CursorLeft = left_progress;
+                    Console.WriteLine($"CURRENT SPEED:              {(progr - oldp) * IMG_HEIGHT * IMG_WIDTH / (sw_report.ElapsedMilliseconds / 1000d),11:N0} px/s");
 
                     for (int i = 0; i < THREADS; ++i)
                     {
@@ -304,6 +330,23 @@ namespace buddhaslice
                         ++top_exports;
                     }
 
+                    if (!fin && progr == 1)
+                    {
+                        Console.CursorLeft = 6;
+                        Console.CursorTop = top_exports;
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.Write($"[{DateTime.Now:HH:mm:ss.fff}] ");
+                        Console.ForegroundColor = ConsoleColor.White;
+                        Console.Write("Finished rendering. Saving final result ...");
+
+                        ++top_exports;
+
+                        fin = true;
+                    }
+
+                    updatememory = (updatememory + 1) % 3;
+                    oldp = progr;
+
                     sw_report.Restart();
                 }
                 else
@@ -333,10 +376,14 @@ namespace buddhaslice
             {
                 nameof(Render),
                 nameof(Calculate),
-                nameof(SaveTiledPNG)
+                nameof(SaveTiledPNG),
+                nameof(CalculateTiles)
             })
                 RuntimeHelpers.PrepareMethod(t.GetMethod(m, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)!.MethodHandle);
         }
+
+#endregion
+        #region LOAD / SAVE
 
         private static void LoadDefaultSettings()
         {
@@ -430,8 +477,11 @@ namespace buddhaslice
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void InitializeMaskAndImage()
         {
-            _image = new BigFuckingAllocator<(int, int, int)>(IMG_WIDTH * IMG_HEIGHT);
-
+#if COMPLETE_BUDDHA
+            _image = new BigFuckingAllocator<(bool, int)>(IMG_WIDTH * IMG_HEIGHT);
+#else
+            _image = new BigFuckingAllocator<(bool, int, int, int)>(IMG_WIDTH * IMG_HEIGHT);
+#endif
             if (CLAIM_MEM)
                 _image.AggressivelyClaimAllTheFuckingMemory();
 
@@ -462,14 +512,9 @@ namespace buddhaslice
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static unsafe void SaveTiledPNG()
+        private static unsafe Bitmap[,] CalculateTiles(int tilecount)
         {
             // TODO : improve this whole method with AVX2-instructions.
-
-            int tiles = 1;
-
-            while (IMG_WIDTH * IMG_HEIGHT / (ulong)(tiles * tiles) > (ulong)MAX_OUTPUT_IMG_SIZE)
-                ++tiles;
 
             int max(params int[] v) => v.Max();
             uint clamp(double v) => (uint)Math.Max(0, Math.Min(v, 255));
@@ -478,14 +523,38 @@ namespace buddhaslice
             for (ulong i = 0; i < IMG_WIDTH * IMG_HEIGHT; ++i)
             {
                 var pixel = _image[i];
-
+#if COMPLETE_BUDDHA
+                brightest = Math.Max(brightest, pixel->Iterations);
+#else
                 brightest = Math.Max(brightest, max(pixel->Iterations_B, pixel->Iterations_G, pixel->Iterations_R));
+#endif
             }
 
+#if COMPLETE_BUDDHA
+            brightest = 512 / Math.Sqrt(brightest);
+#else
             brightest = 6000 / Math.Sqrt(brightest);
+#endif
 
-            Bitmap[,] bmp = new ImageTiler<(int r, int g, int b)>(_image, pixel =>
+#if COMPLETE_BUDDHA
+            return new ImageTiler<(bool v, int i)>(_image, pixel =>
             {
+                if (!pixel.v)
+                    return 0x00000000u;
+
+                uint v = clamp(Math.Sqrt(pixel.i) * brightest);
+
+                return 0xff000000u
+                     | (v << 16)
+                     | (v << 8)
+                     | v;
+            }).GenerateTiles((tilecount, tilecount), ((int)IMG_WIDTH, (int)IMG_HEIGHT));
+#else
+            return new ImageTiler<(bool v, int r, int g, int b)>(_image, pixel =>
+            {
+                if (!pixel.v)
+                    return 0x00000000u;
+
                 double r = Math.Sqrt(pixel.r) * brightest;
                 double g = Math.Sqrt(pixel.g) * brightest;
                 double b = Math.Sqrt(pixel.b) * brightest;
@@ -494,17 +563,60 @@ namespace buddhaslice
                      | (clamp(r) << 16)
                      | (clamp(g) << 8)
                      | clamp(b);
-            }).GenerateTiles((tiles, tiles), ((int)IMG_WIDTH, (int)IMG_HEIGHT));
+            }).GenerateTiles((tilecount, tilecount), ((int)IMG_WIDTH, (int)IMG_HEIGHT));
+#endif
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void SaveTiledPNG()
+        {
+            int tiles = 1;
+
+            while (IMG_WIDTH * IMG_HEIGHT / (ulong)(tiles * tiles) > (ulong)MAX_OUTPUT_IMG_SIZE)
+                ++tiles;
+
+            Bitmap[,] bmp = CalculateTiles(tiles);
 
             for (int x = 0; x < tiles; ++x)
                 for (int y = 0; y < tiles; ++y)
                 {
                     string path = string.Format(PATH_OUTPUT_IMG, x, y);
+                    using Bitmap b = bmp[x, y];
 
-                    bmp[x, y].Save(path, ImageFormat.Png);
+                    SetExifData(b, 0x0131, "Buddhaslice by Unknown6656");
+                    SetExifData(b, 0x013b, "Unknown6656");
+                    SetExifData(b, 0x8298, "(c) 2019, Unknown6656");
+                    SetExifData(b, 0x010e, $@"
+WIDTH:             {IMG_WIDTH:N0} px
+HEIGHT:            {IMG_HEIGHT:N0} px
+ITERATIONS:        {MAX_ITER:N0}
+THREADS:           {THREADS}
+DPP:               {DPP}
+SLICE LEVEL:       {SLICE_LEVEL}
+TILE (X, Y):       ({x}, {y})
+MASK PATH:         ""{PATH_MASK}""
+THRESHOLD B -> G:  {THRESHOLD__B_G}
+THRESHOLD G -> R:  {THRESHOLD__G_R}
+".Trim());
+
+                    b.Save(path, ImageFormat.Png);
 
                     _queue_rendered.Enqueue((path, true));
                 }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void SetExifData(Bitmap bmp, int id, string value)
+        {
+            PropertyItem prop = (PropertyItem)FormatterServices.GetUninitializedObject(typeof(PropertyItem));
+            byte[] bytes = Encoding.ASCII.GetBytes(value + '\0');
+
+            prop.Id = id;
+            prop.Type = 2;
+            prop.Value = bytes;
+            prop.Len = bytes.Length;
+
+            bmp.SetPropertyItem(prop);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -521,9 +633,14 @@ namespace buddhaslice
 
             for (ulong i = 0; i < IMG_WIDTH * IMG_HEIGHT; ++i)
             {
+                wr.Write(_image[i]->Computed);
+#if COMPLETE_BUDDHA
+                wr.Write(_image[i]->Iterations);
+#else
                 wr.Write(_image[i]->Iterations_R);
                 wr.Write(_image[i]->Iterations_G);
                 wr.Write(_image[i]->Iterations_B);
+#endif
             }
 
             _queue_rendered.Enqueue((PATH_OUTPUT_DAT, true));
@@ -535,11 +652,15 @@ namespace buddhaslice
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void Render(int rank)
         {
+#if COMPLETE_BUDDHA
+            int orbit_idx = 0;
+
+            while (_orbit_indices[orbit_idx] >= 0)
+                orbit_idx = (orbit_idx + 1) % CORES;
+#endif
             int w = (int)IMG_WIDTH;
             int x_px_per_thread = w / THREADS;
             int xsteps = rank < THREADS - 1 ? x_px_per_thread : w - x_px_per_thread * (THREADS - 1);
-            int w_mask = _mask.GetLength(0);
-            int h_mask = _mask.GetLength(1);
             (double left, double top, double right, double bottom) = IMAGE_BOUNDS;
             (double mleft, double mtop, double mright, double mbottom) = MASK_BOUNDS;
             (int mwidth, int mheight) = (_mask.GetLength(0), _mask.GetLength(1));
@@ -553,6 +674,7 @@ namespace buddhaslice
                     double re = (right - left) * (px * DPP + x_dpp) / w / DPP + left;
 
                     for (int py = 0; py < (int)IMG_HEIGHT; ++py)
+                    {
                         for (int y_dpp = 0; y_dpp < DPP; ++y_dpp)
                         {
                             double im = (bottom - top) * (py * DPP + y_dpp) / IMG_HEIGHT / DPP + top;
@@ -569,37 +691,34 @@ namespace buddhaslice
                                 check = true;
 
                             if (check)
-                                Calculate(in left, in top, in right, in bottom, new Complex(re, im));
+                                Calculate(in left, in top, in right, in bottom, new Complex(re, im), orbit_idx);
                         }
-                }
 
-                _progress[rank] = (double)px_rel / xsteps;
+                        _progress[rank] = (px_rel + (x_dpp + (py + 1d) / IMG_HEIGHT) / DPP) / xsteps;
+                        _image[(ulong)py * IMG_WIDTH + (ulong)px]->Computed = true;
+                    }
+                }
             }
 
-            _progress[rank] = 1;
+            _orbit_indices[orbit_idx] = -1;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static unsafe void Calculate(in double left, in double top, in double right, in double bottom, Complex c)
+        private static unsafe void Calculate(in double left, in double top, in double right, in double bottom, Complex c
+#if COMPLETE_BUDDHA
+            , int orbit_idx
+#endif
+            )
         {
-            Complex z = c;
-            Complex q;
-            int iter = SLICE_LEVEL;
+            int count = 0;
+            Complex z = 0; // 0 ?
 
-            for (int i = 0; i < SLICE_LEVEL; ++i)
-                z = z * z + c;
+            while (Math.Abs(z.Imaginary) < 2 && Math.Abs(z.Imaginary) < 2 && count < MAX_ITER)
+                _orbits[orbit_idx, count++] = z = z * z + c;
 
-            q = z;
-
-            while (Math.Abs(z.Imaginary) < 2 && Math.Abs(z.Imaginary) < 2 && iter < MAX_ITER)
+            for (int i = 0; i < count; ++i)
             {
-                z = z * z + c;
-
-                ++iter;
-            }
-
-            if (iter < MAX_ITER)
-            {
+                Complex q = _orbits[orbit_idx, i];
                 double x_idx = (q.Real - left) * IMG_WIDTH / (right - left);
                 double y_idx = (q.Imaginary - top) * IMG_HEIGHT / (bottom - top);
 
@@ -607,18 +726,21 @@ namespace buddhaslice
                     y_idx >= 0 && y_idx < IMG_HEIGHT)
                 {
                     ulong idx = (ulong)y_idx * IMG_WIDTH + (ulong)x_idx;
+#if COMPLETE_BUDDHA
+                    ++_image[idx]->Iterations;
+#else
+                    if (i > THRESHOLD__G_R + THRESHOLD__B_G)
+                        _image[idx]->Iterations_R += i - THRESHOLD__G_R - THRESHOLD__B_G;
 
-                    if (iter > THRESHOLD__G_R + THRESHOLD__B_G)
-                        _image[idx]->Iterations_R += iter - THRESHOLD__G_R - THRESHOLD__B_G;
-                    
-                    if (iter > THRESHOLD__B_G)
-                        _image[idx]->Iterations_G += (short)(Math.Min(iter, THRESHOLD__G_R) - THRESHOLD__B_G);
+                    if (i > THRESHOLD__B_G)
+                        _image[idx]->Iterations_G += (short)(Math.Min(i, THRESHOLD__G_R) - THRESHOLD__B_G);
 
-                    _image[idx]->Iterations_B += (short)Math.Max(0, Math.Min(iter - 5, THRESHOLD__B_G));
+                    _image[idx]->Iterations_B += (short)Math.Max(0, Math.Min(i - 5, THRESHOLD__B_G));
+#endif
                 }
             }
         }
 
-        #endregion
+#endregion
     }
 }
