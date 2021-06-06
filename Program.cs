@@ -2,12 +2,9 @@
 
 #nullable enable
 
-using System.Runtime.Intrinsics.X86;
-using System.Runtime.ExceptionServices;
 using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Threading.Tasks.Dataflow;
 using System.Threading.Tasks;
 using System.Diagnostics;
@@ -52,7 +49,7 @@ namespace buddhaslice
         private static (double left, double top, double right, double bottom) MASK_BOUNDS;
         private static (double left, double top, double right, double bottom) IMAGE_BOUNDS;
 
-        private static ConcurrentQueue<(string name, bool finished)> _queue_rendered = new ConcurrentQueue<(string, bool)>();
+        private static ConcurrentQueue<(string name, bool finished)> _queue_rendered = new();
         private static ExecutionDataflowBlockOptions? _options;
 
         // indexing: [y * WIDTH + x]
@@ -111,7 +108,7 @@ namespace buddhaslice
                     using (_reporter)
                         _reporter.Wait();
 
-                StringBuilder sb = new StringBuilder();
+                StringBuilder sb = new();
 
                 while (ex != null)
                 {
@@ -136,7 +133,7 @@ namespace buddhaslice
             _orbits = new Complex[CORES, MAX_ITER];
             _orbit_indices = Enumerable.Repeat(-1, CORES).ToArray();
 #endif
-            ActionBlock<int> block = new ActionBlock<int>(Render, _options = new ExecutionDataflowBlockOptions
+            ActionBlock<int> block = new(Render, _options = new ExecutionDataflowBlockOptions
             {
                 MaxDegreeOfParallelism = CORES,
                 EnsureOrdered = false,
@@ -225,9 +222,9 @@ namespace buddhaslice
 
             int top_exports = Console.CursorTop;
 
-            Stopwatch sw_total = new Stopwatch();
-            Stopwatch sw_report = new Stopwatch();
-            Stopwatch sw_save = new Stopwatch();
+            Stopwatch sw_total = new();
+            Stopwatch sw_report = new();
+            Stopwatch sw_save = new();
 
             sw_total.Start();
             sw_report.Start();
@@ -382,7 +379,7 @@ namespace buddhaslice
                 RuntimeHelpers.PrepareMethod(t.GetMethod(m, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)!.MethodHandle);
         }
 
-#endregion
+        #endregion
         #region LOAD / SAVE
 
         private static void LoadDefaultSettings()
@@ -624,9 +621,9 @@ THRESHOLD G -> R:  {THRESHOLD__G_R}
         {
             _queue_rendered.Enqueue((PATH_OUTPUT_DAT, false));
 
-            using FileStream fs = new FileStream(PATH_OUTPUT_DAT, FileMode.Create, FileAccess.Write, FileShare.Read);
-            using BufferedStream bf = new BufferedStream(fs);
-            using BinaryWriter wr = new BinaryWriter(bf);
+            using FileStream fs = new(PATH_OUTPUT_DAT, FileMode.Create, FileAccess.Write, FileShare.Read);
+            using BufferedStream bf = new(fs);
+            using BinaryWriter wr = new(bf);
 
             wr.Write(IMG_WIDTH);
             wr.Write(IMG_HEIGHT);
@@ -706,7 +703,7 @@ THRESHOLD G -> R:  {THRESHOLD__G_R}
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void Calculate(in double left, in double top, in double right, in double bottom, Complex c
 #if COMPLETE_BUDDHA
-            , int orbit_idx
+            , int orbit_index
 #endif
             )
         {
@@ -714,18 +711,18 @@ THRESHOLD G -> R:  {THRESHOLD__G_R}
             Complex z = 0; // 0 ?
 
             while (Math.Abs(z.Imaginary) < 2 && Math.Abs(z.Imaginary) < 2 && count < MAX_ITER)
-                _orbits[orbit_idx, count++] = z = z * z + c;
+                _orbits[orbit_index, count++] = z = z * z + c;
 
             for (int i = 0; i < count; ++i)
             {
-                Complex q = _orbits[orbit_idx, i];
-                double x_idx = (q.Real - left) * IMG_WIDTH / (right - left);
-                double y_idx = (q.Imaginary - top) * IMG_HEIGHT / (bottom - top);
+                Complex q = _orbits[orbit_index, i];
+                double x_index = (q.Real - left) * IMG_WIDTH / (right - left);
+                double y_index = (q.Imaginary - top) * IMG_HEIGHT / (bottom - top);
 
-                if (x_idx >= 0 && x_idx < IMG_WIDTH &&
-                    y_idx >= 0 && y_idx < IMG_HEIGHT)
+                if (x_index >= 0 && x_index < IMG_WIDTH &&
+                    y_index >= 0 && y_index < IMG_HEIGHT)
                 {
-                    ulong idx = (ulong)y_idx * IMG_WIDTH + (ulong)x_idx;
+                    ulong idx = (ulong)y_index * IMG_WIDTH + (ulong)x_index;
 #if COMPLETE_BUDDHA
                     ++_image[idx]->Iterations;
 #else
