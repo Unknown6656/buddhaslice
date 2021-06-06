@@ -1,14 +1,30 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
     <PropertyGroup>
-        <AssemblyFileVersion>1.0.*</AssemblyFileVersion>
-        <OutputType>Exe</OutputType>
-        <TargetFramework>netcoreapp3.0</TargetFramework>
-        <UseWindowsForms>true</UseWindowsForms>
+        <TargetFramework>net6.0-windows</TargetFramework>
+
+        <LangVersion>preview</LangVersion>
+        <Nullable>enable</Nullable>
+        <NullableContextOptions>enable</NullableContextOptions>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <PlatformTarget>x64</PlatformTarget>
+
+        <OutputType>Exe</OutputType>
         <OutputPath>bin</OutputPath>
+
+        <UseWindowsForms>true</UseWindowsForms>
+        <PlatformTarget>x64</PlatformTarget>
+
+        <!-- <TrimMode>Link</TrimMode> -->
+        <Deterministic>true</Deterministic>
+        <!--<Deterministic>false</Deterministic>-->
+        <PublishTrimmed>true</PublishTrimmed>
+        <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+        <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+        <GenerateSerializationAssemblies>Auto</GenerateSerializationAssemblies>
+        <DisableWinExeOutputInference>true</DisableWinExeOutputInference>
         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-        <Deterministic>false</Deterministic>
+        <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Configuration)'=='Release'">
         <Optimize>true</Optimize>
