@@ -125,7 +125,7 @@ namespace buddhaslice
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public readonly Span<T> GetSlice(int index) => new Span<T>(_slices[index], index < _slices.Length - 1 ? _slicesize : (int)(ItemCount - (ulong)index * (ulong)_slicesize));
+        public readonly Span<T> GetSlice(int index) => new(_slices[index], index < _slices.Length - 1 ? _slicesize : (int)(ItemCount - (ulong)index * (ulong)_slicesize));
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly IEnumerable<T> AsIEnumerable()
@@ -144,11 +144,11 @@ namespace buddhaslice
             return iterator(i => sl[i / sz][i % sz]);
         }
 
-        public static implicit operator BigFuckingAllocator<T>(T[] array) => new BigFuckingAllocator<T>(array);
+        public static implicit operator BigFuckingAllocator<T>(T[] array) => new(array);
 
-        public static implicit operator BigFuckingAllocator<T>(Span<T> span) => new BigFuckingAllocator<T>(span);
+        public static implicit operator BigFuckingAllocator<T>(Span<T> span) => new(span);
 
-        public static implicit operator BigFuckingAllocator<T>(Memory<T> memory) => new BigFuckingAllocator<T>(memory.Span);
+        public static implicit operator BigFuckingAllocator<T>(Memory<T> memory) => new(memory.Span);
     }
 
     public sealed class ImageTiler<T>
@@ -170,7 +170,7 @@ namespace buddhaslice
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private unsafe Bitmap GenerateTile(int xoffs, int yoffs, int width, int height, int total_width)
         {
-            Bitmap bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            Bitmap bmp = new(width, height, PixelFormat.Format32bppArgb);
             BitmapData dat = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadWrite, bmp.PixelFormat);
             uint* ptr = (uint*)dat.Scan0;
 
