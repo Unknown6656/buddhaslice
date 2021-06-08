@@ -1,55 +1,72 @@
-﻿
+﻿using System.Runtime.CompilerServices;
+using System.Text.Json;
+
+
+#if DOUBLE_PRECISION
+using precision = System.Double;
+#else
+using precision = System.Single;
+#endif
+
 namespace buddhaslice
 {
-    public readonly struct Settings
+    public struct Settings
     {
-        public string path_mask { get; init; }
-        public string path_raw { get; init; }
-        public string path_out { get; init; }
-        public Bounds bounds { get; init; }
-        public ulong width { get; init; }
-        public ulong height { get; init; }
-        public int max_iter { get; init; }
-        public int max_image_size { get; init; }
-        public int slice { get; init; }
-        public int dpp { get; init; }
-        public int threads { get; init; }
-        public int cores { get; init; }
-        public int threshold_g { get; init; }
-        public int threshold_r { get; init; }
-        public bool claim_memory { get; init; }
-        public int report_interval_ms { get; init; }
-        public ExportSettings export { get; init; }
+        public ulong width;
+        public ulong height;
+        public Bounds bounds;
+        public Mask mask;
+        public int max_iter;
+        public int slice_offset;
+        public int slice_count;
+        public int dpp;
+        public int cores;
+        public ushort threshold_g;
+        public ushort threshold_r;
+        public int report_interval_ms;
+        public ExportSettings export;
+
+
+        public override string ToString() => JsonSerializer.Serialize(this, new JsonSerializerOptions { IncludeFields = true });
     }
 
-    public readonly struct Bounds
+    public struct Mask
     {
-        public Bound image { get; init; }
-        public Bound mask { get; init; }
+        public string path;
+        public Bounds bounds;
     }
 
-    public readonly struct Bound
+    public struct Bounds
     {
-        public double left { get; init; }
-        public double right { get; init; }
-        public double top { get; init; }
-        public double bottom { get; init; }
+        public precision left;
+        public precision right;
+        public precision top;
+        public precision bottom;
+
+        public precision Width => right - left;
+        public precision Height => bottom - top;
 
 
-        public Bound(double left, double right, double top, double bottom)
+        public Bounds(precision left, precision right, precision top, precision bottom)
         {
             this.left = left;
             this.right = right;
             this.top = top;
             this.bottom = bottom;
         }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool Contains(precision x, precision y) => left <= x && x <= right && top <= y && y <= bottom;
     }
 
-    public readonly struct ExportSettings
+    public struct ExportSettings
     {
-        public int interval_ms { get; init; }
-        public bool raw { get; init; }
-        public bool png { get; init; }
-        public bool raw_at_end { get; init; }
+        public int interval_ms;
+        public bool raw;
+        public bool png;
+        public bool raw_at_end;
+        public string path_raw;
+        public string path_png;
+        public int max_image_size;
     }
 }
