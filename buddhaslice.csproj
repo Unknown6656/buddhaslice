@@ -35,7 +35,8 @@
         <DefineConstants>DEBUG;TRACE</DefineConstants>
     </PropertyGroup>
     <ItemGroup>
-      <PackageReference Include="Newtonsoft.Json" Version="12.0.2" />
+      <PackageReference Include="Unknown6656.BigFuckingAllocator" Version="1.0.0" />
+      <PackageReference Include="Unknown6656.Core" Version="1.0.21.2" />
     </ItemGroup>
     <ItemGroup>
       <None Update="mask.png">
