@@ -1,6 +1,4 @@
-﻿#define COMPLETE_BUDDHA
-
-#nullable enable
+﻿// #define COMPLETE_BUDDHA
 
 using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
@@ -12,72 +10,68 @@ using System.Reflection;
 using System.Drawing.Imaging;
 using System.Drawing;
 using System.Numerics;
+using System.Text.Json;
 using System.Text;
 using System.Linq;
 using System.IO;
 using System;
 
-using Newtonsoft.Json;
+using Unknown6656.BigFuckingAllocator;
+using Unknown6656.Controls.Console;
+using Unknown6656.IO;
+using Unknown6656.Common;
+using System.Threading;
+using Microsoft.CSharp.RuntimeBinder;
+
+
+#if DOUBLE_PRECISION
+using precision = System.Double;
+#else
+using precision = System.Single;
+#endif
+
 
 namespace buddhaslice
 {
+    public struct PIXEL
+    {
+        public bool Computed;
+        public ushort R, G, B;
+#if COMPLETE_BUDDHA
+        public int Iterations;
+#endif
+
+        public override string ToString() => $"{Computed}| {R} {G} {B}";
+    }
+
     public static class Program
     {
         public const string PATH_CONFIG = "settings.json";
 
-        #region FIELDS / SETTINGS
-
-        private static ulong IMG_WIDTH;
-        private static ulong IMG_HEIGHT;
-        private static int MAX_ITER;
-        private static int THREADS;
-        private static int CORES;
-        private static int DPP;
-        private static int SLICE_LEVEL;
-        private static int REPORTER_INTERVAL_MS;
-        private static int SNAPSHOT_INTERVAL_MS;
-        private static int MAX_OUTPUT_IMG_SIZE;
-        private static string PATH_MASK;
-        private static string PATH_OUTPUT_DAT;
-        private static string PATH_OUTPUT_IMG;
-        private static bool EXPORT_RAW_AT_END;
-        private static bool EXPORT_RAW;
-        private static bool EXPORT_PNG;
-        private static bool CLAIM_MEM;
-        private static int THRESHOLD__B_G;
-        private static int THRESHOLD__G_R;
-        private static (double left, double top, double right, double bottom) MASK_BOUNDS;
-        private static (double left, double top, double right, double bottom) IMAGE_BOUNDS;
+        public static Settings Settings { get; private set; }
 
         private static ConcurrentQueue<(string name, bool finished)> _queue_rendered = new();
         private static ExecutionDataflowBlockOptions? _options;
 
         // indexing: [y * WIDTH + x]
+        private static BigFuckingAllocator<PIXEL> _image;
 #if COMPLETE_BUDDHA
-        private static BigFuckingAllocator<(bool Computed, int Iterations)> _image;
         private static Complex[,] _orbits;
         private static int[] _orbit_indices;
-#else
-        private static BigFuckingAllocator<(bool Computed, int Iterations_R, int Iterations_G, int Iterations_B)> _image;
 #endif
-        private static double[] _progress;
+        private static precision[] _progress;
         private static bool[,] _mask;
         private static bool _isrunning = true;
 
-        #endregion
+
         #region ENTRY POINT / SCHEDULING / ...
 
-        public static async Task Main(string[] _)
+        public static void Main(string[] _)
         {
-            Task? _reporter = null;
             void exit()
             {
                 _isrunning = false;
-                _image.Dispose();
-
-                if (_reporter is { })
-                    using (_reporter)
-                        _reporter.Wait();
+                _image?.Dispose();
 
                 Console.CursorVisible = true;
                 Console.ForegroundColor = ConsoleColor.Gray;
@@ -90,23 +84,28 @@ namespace buddhaslice
             {
                 LoadSettings();
 
-                _reporter = await Task.Factory.StartNew(ProgressReporterTask);
+                Task _reporter = Task.Factory.StartNew(ProgressReporterTask);
 
                 InitializeMaskAndImage();
                 WarmUpMethods();
+                RenderImage();
 
-                await CreateRenderTask();
+                unsafe
+                {
+                    for (ulong i = 0; i < _image.ItemCount; ++i)
+                        if (!_image[i]->Computed)
+                            Console.WriteLine($"{i}: {*_image[i]}");
+                }
 
                 SaveSnapshot(true);
+
+                _isrunning = false;
+                _reporter.GetAwaiter().GetResult();
             }
             catch (Exception? ex)
             when (!Debugger.IsAttached)
             {
                 _isrunning = false;
-
-                if (_reporter is { })
-                    using (_reporter)
-                        _reporter.Wait();
 
                 StringBuilder sb = new();
 
@@ -127,27 +126,6 @@ namespace buddhaslice
             exit();
         }
 
-        private static async Task CreateRenderTask()
-        {
-#if COMPLETE_BUDDHA
-            _orbits = new Complex[CORES, MAX_ITER];
-            _orbit_indices = Enumerable.Repeat(-1, CORES).ToArray();
-#endif
-            ActionBlock<int> block = new(Render, _options = new ExecutionDataflowBlockOptions
-            {
-                MaxDegreeOfParallelism = CORES,
-                EnsureOrdered = false,
-            });
-
-            foreach (int rank in Enumerable.Range(0, THREADS))
-                block.Post(rank);
-
-            block.Complete();
-
-            await block.Completion;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static async Task ProgressReporterTask()
         {
             const int WIDTH = 180;
@@ -168,32 +146,33 @@ namespace buddhaslice
 
             Console.ForegroundColor = ConsoleColor.White;
             Console.WriteLine($@"  RENDER CONFIGURATION:
-       WIDTH:             {IMG_WIDTH:N0} px
-       HEIGHT:            {IMG_HEIGHT:N0} px
-       TOTAL PIXELS:      {IMG_HEIGHT * IMG_WIDTH:N0} px
-       TOTAL COMPLEX OPS: {IMG_HEIGHT * IMG_WIDTH * (ulong)(DPP * DPP * (MAX_ITER + SLICE_LEVEL)):N0}
-       ITERATIONS:        {MAX_ITER:N0}
-       THREADS:           {THREADS}
-       PIXELS PER THREAD: {IMG_HEIGHT * IMG_WIDTH / (ulong)THREADS:N0} px
-       CORES:             {CORES} (+ 1)
-       DPP:               {DPP}
-       SLICE LEVEL:       {SLICE_LEVEL}
-       SNAPSHOT INTERVAL: {SNAPSHOT_INTERVAL_MS / 1000d}s
-       MAX. IMAGE SIZE:   {MAX_OUTPUT_IMG_SIZE / 1024d:N2} kpx
-       MASK PATH:         ""{PATH_MASK}""
-       OUTPUT PNG PATH:   ""{PATH_OUTPUT_IMG}""
-       OUTPUT RAW PATH:   ""{PATH_OUTPUT_DAT}""
-       CLAIM MEMORY:      {CLAIM_MEM}
-       EXPORT PNG:        {EXPORT_PNG}
-       EXPORT RAW:        {EXPORT_RAW}
-       EXPORT RAW AT END: {EXPORT_RAW_AT_END}
-       THRESHOLD B -> G:  {THRESHOLD__B_G}
-       THRESHOLD G -> R:  {THRESHOLD__G_R}");
+       WIDTH:             {Settings.width:N0} px
+       HEIGHT:            {Settings.height:N0} px
+       TOTAL PIXELS:      {Settings.height * Settings.width:N0} px
+       TOTAL COMPLEX OPS: {Settings.height * Settings.width * (ulong)(Settings.dpp * Settings.dpp * (Settings.max_iter + Settings.slice_offset) * Settings.slice_count):N0}
+       ITERATIONS:        {Settings.max_iter:N0}
+       PIXELS PER THREAD: {Settings.height * Settings.width / (ulong)Settings.cores:N0} px
+       THREADS:           {Settings.cores} (+ 1)
+       DPP:               {Settings.dpp}
+       SLICE LEVELS:      {Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}
+       SNAPSHOT INTERVAL: {Settings.export.interval_ms / 1000d}s
+       MAX. IMAGE SIZE:   {Settings.export.max_image_size / 1024d:N2} kpx
+       MASK PATH:         ""{Settings.mask.path}""
+       OUTPUT PNG PATH:   ""{Settings.export.path_png}""
+       OUTPUT RAW PATH:   ""{Settings.export.path_raw}""
+       EXPORT PNG:        {Settings.export.png}
+       EXPORT RAW:        {Settings.export.raw}
+       EXPORT RAW AT END: {Settings.export.raw_at_end}
+       THRESHOLD B -> G:  {Settings.threshold_g}
+       THRESHOLD G -> R:  {Settings.threshold_r}");
 
             int tmp = Console.CursorTop;
 
             Console.CursorLeft = WIDTH / 2 - 1;
             Console.ForegroundColor = ConsoleColor.Gray;
+            Console.CursorTop = top_progress - 1;
+            Console.Write('╦');
+            Console.CursorLeft--;
 
             for (int t = top_progress; t < tmp; ++t)
             {
@@ -201,6 +180,9 @@ namespace buddhaslice
                 Console.Write('║');
                 Console.CursorLeft--;
             }
+
+            ++Console.CursorTop;
+            Console.Write('╩');
 
             ++top_progress;
 
@@ -211,10 +193,10 @@ namespace buddhaslice
             Console.WriteLine("  THREADS:");
 
             int top_threads = Console.CursorTop;
-            int t_per_row = (WIDTH - 12) / 7;
-            (int l, int t) get_thread_pos(int rank) => (6 + (rank % t_per_row) * 7, top_threads + rank / t_per_row);
+            int t_per_row = (WIDTH - 12) / 14;
+            (int l, int t) get_thread_pos(int rank) => (6 + (rank % t_per_row) * 13, top_threads + rank / t_per_row);
 
-            Console.CursorTop = get_thread_pos(THREADS + 1).t + 1;
+            Console.CursorTop = get_thread_pos(Settings.cores + 1).t + 1;
             Console.ForegroundColor = ConsoleColor.Gray;
             Console.WriteLine(new string('═', WIDTH));
             Console.ForegroundColor = ConsoleColor.White;
@@ -232,11 +214,11 @@ namespace buddhaslice
 
             long max_mem = 0;
             bool fin = false;
-            double oldp = 0;
+            precision oldp = 0;
             int updatememory = 0;
 
             do
-                if (sw_save.ElapsedMilliseconds >= SNAPSHOT_INTERVAL_MS)
+                if (sw_save.ElapsedMilliseconds >= Settings.export.interval_ms)
                 {
                     sw_save.Stop();
                     sw_save.Reset();
@@ -257,10 +239,10 @@ namespace buddhaslice
                         sw_save.Restart();
                     }); // we do NOT want to await this task!
                 }
-                else if (sw_report.ElapsedMilliseconds >= REPORTER_INTERVAL_MS)
+                else if (sw_report.ElapsedMilliseconds >= Settings.report_interval_ms)
                 {
                     TimeSpan elapsed = sw_total.Elapsed;
-                    double progr = _progress.Sum() / THREADS;
+                    precision progr = _progress.Sum() / Settings.cores;
                     string est_rem = progr < 1e-5 ? "∞" : $"{TimeSpan.FromMilliseconds(elapsed.TotalMilliseconds / progr) - elapsed:dd':'hh':'mm':'ss}.00";
 
                     Console.CursorLeft = left_progress;
@@ -291,27 +273,27 @@ namespace buddhaslice
                     Console.CursorLeft = left_progress;
                     Console.WriteLine($"TOTAL PROGRESS:             {progr * 100,11:N5} %");
                     Console.CursorLeft = left_progress;
-                    Console.WriteLine($"CURRENT SPEED:              {(progr - oldp) * IMG_HEIGHT * IMG_WIDTH / (sw_report.ElapsedMilliseconds / 1000d),11:N0} px/s");
+                    Console.WriteLine($"CURRENT SPEED:              {(progr - oldp) * Settings.height * Settings.width / (sw_report.ElapsedMilliseconds / 1000d),11:N0} px/s");
 
-                    for (int i = 0; i < THREADS; ++i)
+                    for (int i = 0; i < Settings.cores; ++i)
                     {
                         (Console.CursorLeft, Console.CursorTop) = get_thread_pos(i);
-                        double p = Math.Round(_progress[i] * 100, 2);
+                        precision p = (precision)Math.Round(_progress[i] * 100, 8);
 
                         if (p == 0)
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
-                            Console.Write(" 0.00%");
+                            Console.Write(" 0.00000000%");
                         }
                         else if (p < 100)
                         {
                             Console.ForegroundColor = ConsoleColor.Yellow;
-                            Console.Write($"{p,5:N2}%");
+                            Console.Write($"{p,11:N8}%");
                         }
                         else
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGreen;
-                            Console.Write("100.0%");
+                            Console.Write("100.0000000%");
                         }
                     }
 
@@ -347,7 +329,7 @@ namespace buddhaslice
                     sw_report.Restart();
                 }
                 else
-                    await Task.Delay(REPORTER_INTERVAL_MS / 3);
+                    await Task.Delay(Settings.report_interval_ms / 3);
             while (_isrunning);
 
             Console.CursorLeft = 0;
@@ -371,55 +353,16 @@ namespace buddhaslice
 
             foreach (string m in new[]
             {
-                nameof(Render),
+                nameof(RenderImage),
                 nameof(Calculate),
                 nameof(SaveTiledPNG),
-                nameof(CalculateTiles)
+                nameof(DivideImageIntoTiles)
             })
                 RuntimeHelpers.PrepareMethod(t.GetMethod(m, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)!.MethodHandle);
         }
 
         #endregion
         #region LOAD / SAVE
-
-        private static void LoadDefaultSettings()
-        {
-            IMAGE_BOUNDS =
-            MASK_BOUNDS = (-2, -1.1, .75, 1.1);
-#if DEBUG
-            IMG_WIDTH = 3840;
-            IMG_HEIGHT = 2160;
-            MAX_ITER = 10000;
-            THREADS = 256;
-            CORES = 8;
-            DPP = 3;
-#else
-            IMG_WIDTH = 28_800;
-            IMG_HEIGHT = 16_200;
-            MAX_ITER = 50_000;
-            THREADS = 1280;
-            CORES = 8;
-            DPP = 16;
-#endif
-            SLICE_LEVEL = 8;
-
-            REPORTER_INTERVAL_MS = 500;
-            SNAPSHOT_INTERVAL_MS = 360_000;
-
-            MAX_OUTPUT_IMG_SIZE = 536_870_000;
-
-            PATH_MASK = "mask.png";
-            PATH_OUTPUT_DAT = "render.dat";
-            PATH_OUTPUT_IMG = "render--tile{0}{1}.png";
-
-            CLAIM_MEM = true;
-            EXPORT_RAW = true;
-            EXPORT_RAW_AT_END = true;
-            EXPORT_PNG = true;
-
-            THRESHOLD__B_G = 40;
-            THRESHOLD__G_R = 300;
-        }
 
         private static void LoadSettings()
         {
@@ -428,172 +371,135 @@ namespace buddhaslice
 
             try
             {
-                string json = File.ReadAllText(PATH_CONFIG);
-                dynamic config = JsonConvert.DeserializeObject(json);
-                dynamic b_image = config.bounds.image;
-                dynamic b_mask = config.bounds.mask;
-
-                IMAGE_BOUNDS = (b_image.left, b_image.top, b_image.right, b_image.bottom);
-                MASK_BOUNDS = (b_mask.left, b_mask.top, b_mask.right, b_mask.bottom);
-                IMG_WIDTH = config.width;
-                IMG_HEIGHT = config.height;
-                MAX_ITER = config.max_iter;
-                THREADS = config.threads;
-                CORES = config.cores;
-                DPP = config.dpp;
-                SLICE_LEVEL = config.slice;
-                REPORTER_INTERVAL_MS = config.report_interval_ms;
-                SNAPSHOT_INTERVAL_MS = config.export.interval_ms;
-                MAX_OUTPUT_IMG_SIZE = config.max_image_size;
-                PATH_MASK = config.path_mask;
-                PATH_OUTPUT_DAT = config.path_raw;
-                PATH_OUTPUT_IMG = config.path_out;
-                CLAIM_MEM = config.claim_memory;
-                EXPORT_RAW_AT_END = config.export.raw_at_end;
-                EXPORT_RAW = config.export.raw;
-                EXPORT_PNG = config.export.png;
-                THRESHOLD__B_G = config.threshold_g;
-                THRESHOLD__G_R = config.threshold_r;
+                Settings = DataStream.FromFile(PATH_CONFIG).ToJSON<Settings>();
 
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine("Settings loaded.");
             }
             catch
             {
-                LoadDefaultSettings();
+                Bounds default_bounds = new(-2f, -1.1f, .75f, 1.1f);
 
+                Settings = new()
+                {
+                    mask = new()
+                    {
+                        bounds = default_bounds,
+                        path = "mask.png",
+                    },
+                    bounds = default_bounds,
+#if DEBUG
+                    width = 3840,
+                    height = 2160,
+                    max_iter = 10000,
+                    cores = 8,
+                    dpp = 3,
+#else
+                    width = 28_800,
+                    height = 16_200,
+                    max_iter = 50_000,
+                    cores = 8,
+                    dpp = 16,
+#endif
+                    slice_offset = 8,
+                    slice_count = 1,
+                    report_interval_ms = 500,
+                    threshold_g = 40,
+                    threshold_r = 300,
+                    export = new()
+                    {
+                        interval_ms = 360_000,
+                        max_image_size = 536_870_000,
+                        path_raw = "render.dat",
+                        path_png = "render--tile{0}{1}.png",
+#if DEBUG
+                        png = true,
+                        raw = false,
+                        raw_at_end = false,
+#else
+                        png = true,
+                        raw = true,
+                        raw_at_end = true,
+#endif
+                    },
+                };
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine("An error occured. The default settings have been loaded.");
             }
             finally
             {
-                _progress = new double[THREADS];
+                _progress = new precision[Settings.cores];
             }
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void InitializeMaskAndImage()
         {
-#if COMPLETE_BUDDHA
-            _image = new BigFuckingAllocator<(bool, int)>(IMG_WIDTH * IMG_HEIGHT);
-#else
-            _image = new BigFuckingAllocator<(bool, int, int, int)>(IMG_WIDTH * IMG_HEIGHT);
-#endif
-            if (CLAIM_MEM)
-                _image.AggressivelyClaimAllTheFuckingMemory();
+            _image = new(Settings.width * Settings.height);
 
-            // TODO : do something if mask has not been found.
+            try
+            {
+                using Bitmap mask = (Bitmap)Image.FromFile(Settings.mask.path);
+                int w = mask.Width;
+                int h = mask.Height;
 
-            using Bitmap mask = (Bitmap)Image.FromFile(PATH_MASK);
-            int w = mask.Width;
-            int h = mask.Height;
+                _mask = new bool[w, h];
 
-            _mask = new bool[w, h];
+                BitmapData dat = mask.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadWrite, PixelFormat.Format24bppRgb);
+                byte* ptr = (byte*)dat.Scan0;
 
-            BitmapData dat = mask.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadWrite, PixelFormat.Format24bppRgb);
-            byte* ptr = (byte*)dat.Scan0;
+                Parallel.For(0, w * h, i => _mask[i % w, i / w] = ((double)ptr[i * 3 + 0] + ptr[i * 3 + 1] + ptr[i * 3 + 2]) > 0);
 
-            Parallel.For(0, w * h, i => _mask[i % w, i / w] = ((double)ptr[i * 3 + 0] + ptr[i * 3 + 1] + ptr[i * 3 + 2]) > 0);
+                mask.UnlockBits(dat);
+            }
+            catch
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"The mask could not be loaded from '{Settings.mask.path}'.");
 
-            mask.UnlockBits(dat);
+                _mask = new bool[1, 1] { { true } }; // always compute
+            }
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void SaveSnapshot(bool final)
         {
-            if (final ? EXPORT_RAW_AT_END : EXPORT_RAW)
+            if (final ? Settings.export.raw_at_end : Settings.export.raw)
                 SaveRaw();
 
-            if (final || EXPORT_PNG)
+            if (final || Settings.export.png)
                 SaveTiledPNG();
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static unsafe Bitmap[,] CalculateTiles(int tilecount)
-        {
-            // TODO : improve this whole method with AVX2-instructions.
-
-            int max(params int[] v) => v.Max();
-            uint clamp(double v) => (uint)Math.Max(0, Math.Min(v, 255));
-            double brightest = 0;
-
-            for (ulong i = 0; i < IMG_WIDTH * IMG_HEIGHT; ++i)
-            {
-                var pixel = _image[i];
-#if COMPLETE_BUDDHA
-                brightest = Math.Max(brightest, pixel->Iterations);
-#else
-                brightest = Math.Max(brightest, max(pixel->Iterations_B, pixel->Iterations_G, pixel->Iterations_R));
-#endif
-            }
-
-#if COMPLETE_BUDDHA
-            brightest = 512 / Math.Sqrt(brightest);
-#else
-            brightest = 6000 / Math.Sqrt(brightest);
-#endif
-
-#if COMPLETE_BUDDHA
-            return new ImageTiler<(bool v, int i)>(_image, pixel =>
-            {
-                if (!pixel.v)
-                    return 0x00000000u;
-
-                uint v = clamp(Math.Sqrt(pixel.i) * brightest);
-
-                return 0xff000000u
-                     | (v << 16)
-                     | (v << 8)
-                     | v;
-            }).GenerateTiles((tilecount, tilecount), ((int)IMG_WIDTH, (int)IMG_HEIGHT));
-#else
-            return new ImageTiler<(bool v, int r, int g, int b)>(_image, pixel =>
-            {
-                if (!pixel.v)
-                    return 0x00000000u;
-
-                double r = Math.Sqrt(pixel.r) * brightest;
-                double g = Math.Sqrt(pixel.g) * brightest;
-                double b = Math.Sqrt(pixel.b) * brightest;
-
-                return 0xff000000u
-                     | (clamp(r) << 16)
-                     | (clamp(g) << 8)
-                     | clamp(b);
-            }).GenerateTiles((tilecount, tilecount), ((int)IMG_WIDTH, (int)IMG_HEIGHT));
-#endif
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void SaveTiledPNG()
         {
             int tiles = 1;
 
-            while (IMG_WIDTH * IMG_HEIGHT / (ulong)(tiles * tiles) > (ulong)MAX_OUTPUT_IMG_SIZE)
+            while (Settings.width * Settings.height / (ulong)(tiles * tiles) > (ulong)Settings.export.max_image_size)
                 ++tiles;
 
-            Bitmap[,] bmp = CalculateTiles(tiles);
+            Bitmap[,] bmp = DivideImageIntoTiles(tiles);
 
             for (int x = 0; x < tiles; ++x)
                 for (int y = 0; y < tiles; ++y)
                 {
-                    string path = string.Format(PATH_OUTPUT_IMG, x, y);
+                    string path = string.Format(Settings.export.path_png, x, y);
                     using Bitmap b = bmp[x, y];
 
                     SetExifData(b, 0x0131, "Buddhaslice by Unknown6656");
                     SetExifData(b, 0x013b, "Unknown6656");
-                    SetExifData(b, 0x8298, "(c) 2019, Unknown6656");
+                    SetExifData(b, 0x8298, "Copyright (c) 2019, Unknown6656");
                     SetExifData(b, 0x010e, $@"
-WIDTH:             {IMG_WIDTH:N0} px
-HEIGHT:            {IMG_HEIGHT:N0} px
-ITERATIONS:        {MAX_ITER:N0}
-THREADS:           {THREADS}
-DPP:               {DPP}
-SLICE LEVEL:       {SLICE_LEVEL}
+WIDTH:             {Settings.width:N0} px
+HEIGHT:            {Settings.height:N0} px
+ITERATIONS:        {Settings.max_iter:N0}
+CORES:             {Settings.cores}
+DPP:               {Settings.dpp}
+SLICE LEVELS:      {Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}
 TILE (X, Y):       ({x}, {y})
-MASK PATH:         ""{PATH_MASK}""
-THRESHOLD B -> G:  {THRESHOLD__B_G}
-THRESHOLD G -> R:  {THRESHOLD__G_R}
+TILE WIDTH:        {b.Width}
+TILE HEIGHT:       {b.Height}
+MASK PATH:         ""{Settings.mask.path}""
+THRESHOLD B -> G:  {Settings.threshold_r}
+THRESHOLD G -> R:  {Settings.threshold_g}
 ".Trim());
 
                     b.Save(path, ImageFormat.Png);
@@ -602,7 +508,41 @@ THRESHOLD G -> R:  {THRESHOLD__G_R}
                 }
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static unsafe Bitmap[,] DivideImageIntoTiles(int tilecount)
+        {
+            static uint PixelTranslator(PIXEL* pixel, precision brightest)
+            {
+                static uint clamp(double value) => value < 0 ? 0u : value > 255 ? 255u : (uint)value;
+                double r = Math.Sqrt(pixel->R) * brightest;
+                double g = Math.Sqrt(pixel->G) * brightest;
+                double b = Math.Sqrt(pixel->B) * brightest;
+
+                return 0xff000000u
+                     | (clamp(r) << 16)
+                     | (clamp(g) << 8)
+                     | clamp(b);
+            }
+            ImageTiler<precision> tiler = new(_image, &PixelTranslator);
+            precision brightest = 0;
+
+            for (ulong i = 0, count = Settings.width * Settings.height; i < count; ++i)
+            {
+                PIXEL* pixel = _image[i];
+
+#if COMPLETE_BUDDHA
+                (pixel->R, pixel->G, pixel->B) = IterationToRGB(pixel->Iterations);
+#endif
+                brightest = Math.Max(brightest, pixel->R);
+                brightest = Math.Max(brightest, pixel->G);
+                brightest = Math.Max(brightest, pixel->B);
+            }
+
+            //brightest = (precision)(6000 / Math.Sqrt(brightest));
+            brightest = (precision)(512 / Math.Sqrt(brightest));
+
+            return tiler.GenerateTiles(tilecount, tilecount, (int)Settings.width, (int)Settings.height, brightest);
+        }
+
         private static void SetExifData(Bitmap bmp, int id, string value)
         {
             PropertyItem prop = (PropertyItem)FormatterServices.GetUninitializedObject(typeof(PropertyItem));
@@ -616,128 +556,187 @@ THRESHOLD G -> R:  {THRESHOLD__G_R}
             bmp.SetPropertyItem(prop);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void SaveRaw()
         {
-            _queue_rendered.Enqueue((PATH_OUTPUT_DAT, false));
+            _queue_rendered.Enqueue((Settings.export.path_raw, false));
 
-            using FileStream fs = new(PATH_OUTPUT_DAT, FileMode.Create, FileAccess.Write, FileShare.Read);
-            using BufferedStream bf = new(fs);
-            using BinaryWriter wr = new(bf);
+            using FileStream fs = new(Settings.export.path_raw, FileMode.Create, FileAccess.Write, FileShare.Read);
+            using BinaryWriter wr = new(fs);
 
-            wr.Write(IMG_WIDTH);
-            wr.Write(IMG_HEIGHT);
+            wr.Write(Settings.width);
+            wr.Write(Settings.height);
 
-            for (ulong i = 0; i < IMG_WIDTH * IMG_HEIGHT; ++i)
+            for (ulong i = 0, size = Settings.width * Settings.height; i < size; ++i)
             {
-                wr.Write(_image[i]->Computed);
+                PIXEL* pixel = _image[i];
+
+                wr.Write(pixel->Computed);
 #if COMPLETE_BUDDHA
-                wr.Write(_image[i]->Iterations);
+                wr.Write(pixel->Iterations);
 #else
-                wr.Write(_image[i]->Iterations_R);
-                wr.Write(_image[i]->Iterations_G);
-                wr.Write(_image[i]->Iterations_B);
+                wr.Write(pixel->R);
+                wr.Write(pixel->G);
+                wr.Write(pixel->B);
 #endif
             }
 
-            _queue_rendered.Enqueue((PATH_OUTPUT_DAT, true));
+            wr.Flush();
+            fs.Flush();
+            fs.Close();
+
+            _queue_rendered.Enqueue((Settings.export.path_raw, true));
         }
 
         #endregion
         #region RENDER / CALCULATION METHODS
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static unsafe void Render(int rank)
+        private static void RenderImage()
         {
 #if COMPLETE_BUDDHA
-            int orbit_idx = 0;
-
-            while (_orbit_indices[orbit_idx] >= 0)
-                orbit_idx = (orbit_idx + 1) % CORES;
+            _orbits = new Complex[Settings.cores, Settings.max_iter];
+            _orbit_indices = Enumerable.Repeat(-1, Settings.cores).ToArray();
 #endif
-            int w = (int)IMG_WIDTH;
-            int x_px_per_thread = w / THREADS;
-            int xsteps = rank < THREADS - 1 ? x_px_per_thread : w - x_px_per_thread * (THREADS - 1);
-            (double left, double top, double right, double bottom) = IMAGE_BOUNDS;
-            (double mleft, double mtop, double mright, double mbottom) = MASK_BOUNDS;
-            (int mwidth, int mheight) = (_mask.GetLength(0), _mask.GetLength(1));
 
-            for (int px_rel = 0; px_rel < xsteps; ++px_rel)
+
+#if COMPLETE_BUDDHA
+            int orbit_index = 0;
+
+            while (_orbit_indices[orbit_index] >= 0)
+                orbit_index = (orbit_index + 1) % Settings.cores;
+#endif
+
+
+            Bounds i_bounds = Settings.bounds;
+            Bounds m_bounds = Settings.mask.bounds;
+            (int mask_width, int mask_height) = (_mask.GetLength(0), _mask.GetLength(1));
+            ulong cores = (ulong)Settings.cores;
+
+            ActionBlock<ulong> block = new(core =>
             {
-                int px = px_rel + rank * x_px_per_thread;
-
-                for (int x_dpp = 0; x_dpp < DPP; ++x_dpp)
-                {
-                    double re = (right - left) * (px * DPP + x_dpp) / w / DPP + left;
-
-                    for (int py = 0; py < (int)IMG_HEIGHT; ++py)
+                for (ulong index = core, total = _image.ItemCount; index < total; index += cores)
+                    unsafe
                     {
-                        for (int y_dpp = 0; y_dpp < DPP; ++y_dpp)
+                        ulong px = index % Settings.width;
+                        ulong py = index / Settings.width;
+
+
+                        for (int x_dpp = 0; x_dpp < Settings.dpp; ++x_dpp)
                         {
-                            double im = (bottom - top) * (py * DPP + y_dpp) / IMG_HEIGHT / DPP + top;
-                            bool check = mleft <= re && re <= mright && mtop <= im && im <= mbottom;
+                            precision re = (px * i_bounds.Width * Settings.dpp + x_dpp) / ((precision)Settings.width * Settings.dpp) + i_bounds.left;
 
-                            if (check)
+                            for (int y_dpp = 0; y_dpp < Settings.dpp; ++y_dpp)
                             {
-                                int px_mask = (int)((re - mleft) / (mright - mleft) * mwidth);
-                                int py_mask = (int)((im - mtop) / (mbottom - mtop) * mheight);
+                                precision im = (py * i_bounds.Height * Settings.dpp + y_dpp) / ((precision)Settings.height * Settings.dpp) + i_bounds.top;
+                                bool compute = true;
 
-                                check = _mask[px_mask, py_mask];
+                                if (m_bounds.Contains(re, im))
+                                {
+                                    int px_mask = (int)((re - m_bounds.left) / m_bounds.Width * mask_width);
+                                    int py_mask = (int)((im - m_bounds.top) / m_bounds.Height * mask_height);
+
+                                    compute = _mask[px_mask, py_mask];
+                                }
+
+                                if (compute)
+#if COMPLETE_BUDDHA
+                                    Calculate(new Complex(re, im), in i_bounds, orbit_index);
+#else
+                                    Calculate(new Complex(re, im), in i_bounds);
+#endif
                             }
-                            else
-                                check = true;
 
-                            if (check)
-                                Calculate(in left, in top, in right, in bottom, new Complex(re, im), orbit_idx);
+                            _progress[core] = (index * (precision)Settings.dpp + x_dpp) / (total * (precision)Settings.dpp);
                         }
 
-                        _progress[rank] = (px_rel + (x_dpp + (py + 1d) / IMG_HEIGHT) / DPP) / xsteps;
-                        _image[(ulong)py * IMG_WIDTH + (ulong)px]->Computed = true;
+                        _image[index]->Computed = true;
                     }
-                }
-            }
 
-            _orbit_indices[orbit_idx] = -1;
+                _progress[core] = 1;
+            }, new ExecutionDataflowBlockOptions(){ MaxDegreeOfParallelism = Environment.ProcessorCount });
+
+            for (ulong core = 0; core < cores; ++core)
+                block.Post(core);
+
+            block.Complete();
+            block.Completion.Wait();
+
+#if COMPLETE_BUDDHA
+            _orbit_indices[orbit_index] = -1;
+#endif
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static unsafe void Calculate(in double left, in double top, in double right, in double bottom, Complex c
-#if COMPLETE_BUDDHA
-            , int orbit_index
-#endif
-            )
+        private static (ushort R, ushort G, ushort B) IterationToRGB(int iterations)
         {
-            int count = 0;
-            Complex z = 0; // 0 ?
+            ushort r = 0, g = 0, b = (ushort)Math.Max(0, Math.Min(iterations - 5, Settings.threshold_g));
 
-            while (Math.Abs(z.Imaginary) < 2 && Math.Abs(z.Imaginary) < 2 && count < MAX_ITER)
-                _orbits[orbit_index, count++] = z = z * z + c;
+            if (iterations > Settings.threshold_r + Settings.threshold_g)
+                r = (ushort)Math.Min(iterations - Settings.threshold_r - Settings.threshold_g, ushort.MaxValue);
 
-            for (int i = 0; i < count; ++i)
+            if (iterations > Settings.threshold_g)
+                g = (ushort)(Math.Min(iterations, Settings.threshold_r) - Settings.threshold_g);
+
+            return (r, g, b);
+        }
+
+#if COMPLETE_BUDDHA
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static unsafe void Calculate(Complex c, in Bounds bounds, int orbit_index)
+        {
+            int iteration_count = 0;
+            Complex z = 0;
+
+            while (Math.Abs(z.Imaginary) < 2 && Math.Abs(z.Imaginary) < 2 && iteration_count < Settings.max_iter)
+                _orbits[orbit_index, iteration_count++] = z = (z * z) + c;
+
+            for (int i = 0; i < iteration_count; ++i)
             {
                 Complex q = _orbits[orbit_index, i];
-                double x_index = (q.Real - left) * IMG_WIDTH / (right - left);
-                double y_index = (q.Imaginary - top) * IMG_HEIGHT / (bottom - top);
+                ulong x_index = (ulong)((q.Real - Settings.bounds.image.left) * Settings.width / Settings.bounds.image.Width);
+                ulong y_index = (ulong)((q.Imaginary - Settings.bounds.image.top) * Settings.height / Settings.bounds.image.Height);
 
-                if (x_index >= 0 && x_index < IMG_WIDTH &&
-                    y_index >= 0 && y_index < IMG_HEIGHT)
-                {
-                    ulong idx = (ulong)y_index * IMG_WIDTH + (ulong)x_index;
-#if COMPLETE_BUDDHA
-                    ++_image[idx]->Iterations;
+                if (x_index >= 0 && x_index < Settings.width && y_index >= 0 && y_index < Settings.height)
+                    ++_image[(y_index * Settings.width) + x_index]->Iterations;
+            }
+        }
 #else
-                    if (i > THRESHOLD__G_R + THRESHOLD__B_G)
-                        _image[idx]->Iterations_R += i - THRESHOLD__G_R - THRESHOLD__B_G;
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static unsafe void Calculate(Complex c, in Bounds bounds)
+        {
+            int iteration_count = Settings.slice_offset;
+            Complex z = 0;
+            Complex q;
 
-                    if (i > THRESHOLD__B_G)
-                        _image[idx]->Iterations_G += (short)(Math.Min(i, THRESHOLD__G_R) - THRESHOLD__B_G);
+            for (int i = 0; i < iteration_count; ++i)
+                z = z * z + c;
 
-                    _image[idx]->Iterations_B += (short)Math.Max(0, Math.Min(i - 5, THRESHOLD__B_G));
-#endif
+            q = z;
+
+            while (Math.Abs(z.Imaginary) < 2 && Math.Abs(z.Imaginary) < 2 && iteration_count < Settings.max_iter)
+            {
+                z = z * z + c;
+                ++iteration_count;
+            }
+
+            if (iteration_count < Settings.max_iter)
+            {
+                ulong x_index = (ulong)((q.Real - bounds.left) * Settings.width / bounds.Width);
+                ulong y_index = (ulong)((q.Imaginary - bounds.top) * Settings.height / bounds.Height);
+                ulong index = y_index * Settings.width + x_index;
+
+                if (x_index >= 0 && x_index < Settings.width && y_index >= 0 && y_index < Settings.height)
+                {
+                    (ushort R, ushort G, ushort B) = IterationToRGB(iteration_count);
+                    PIXEL* pixel = _image[index];
+
+                    pixel->R += R;
+                    pixel->G += G;
+                    pixel->B += B;
                 }
             }
         }
+#endif
 
-#endregion
+        #endregion
     }
 }
