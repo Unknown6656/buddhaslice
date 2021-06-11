@@ -1,4 +1,4 @@
-﻿// #define COMPLETE_BUDDHA
+﻿//#define COMPLETE_BUDDHA
 
 using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
@@ -17,11 +17,8 @@ using System.IO;
 using System;
 
 using Unknown6656.BigFuckingAllocator;
-using Unknown6656.Controls.Console;
-using Unknown6656.IO;
 using Unknown6656.Common;
-using System.Threading;
-using Microsoft.CSharp.RuntimeBinder;
+using Unknown6656.IO;
 
 
 #if DOUBLE_PRECISION
@@ -36,12 +33,9 @@ namespace buddhaslice
     public struct PIXEL
     {
         public bool Computed;
-        public ushort R, G, B;
-#if COMPLETE_BUDDHA
         public int Iterations;
-#endif
 
-        public override string ToString() => $"{Computed}| {R} {G} {B}";
+        public override string ToString() => $"{Computed}|{Iterations}";
     }
 
     public static class Program
@@ -55,10 +49,6 @@ namespace buddhaslice
 
         // indexing: [y * WIDTH + x]
         private static BigFuckingAllocator<PIXEL> _image;
-#if COMPLETE_BUDDHA
-        private static Complex[,] _orbits;
-        private static int[] _orbit_indices;
-#endif
         private static precision[] _progress;
         private static bool[,] _mask;
         private static bool _isrunning = true;
@@ -68,7 +58,7 @@ namespace buddhaslice
 
         public static void Main(string[] _)
         {
-            void exit()
+            static void exit()
             {
                 _isrunning = false;
                 _image?.Dispose();
@@ -156,7 +146,7 @@ namespace buddhaslice
        DPP:               {Settings.dpp}
        SLICE LEVELS:      {Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}
        SNAPSHOT INTERVAL: {Settings.export.interval_ms / 1000d}s
-       MAX. IMAGE SIZE:   {Settings.export.max_image_size / 1024d:N2} kpx
+       MAX. IMAGE SIZE:   {Settings.export.max_image_size:N2} px
        MASK PATH:         ""{Settings.mask.path}""
        OUTPUT PNG PATH:   ""{Settings.export.path_png}""
        OUTPUT RAW PATH:   ""{Settings.export.path_raw}""
@@ -354,9 +344,8 @@ namespace buddhaslice
             foreach (string m in new[]
             {
                 nameof(RenderImage),
-                nameof(Calculate),
                 nameof(SaveTiledPNG),
-                nameof(DivideImageIntoTiles)
+                nameof(ComputeTiles)
             })
                 RuntimeHelpers.PrepareMethod(t.GetMethod(m, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)!.MethodHandle);
         }
@@ -476,7 +465,7 @@ namespace buddhaslice
             while (Settings.width * Settings.height / (ulong)(tiles * tiles) > (ulong)Settings.export.max_image_size)
                 ++tiles;
 
-            Bitmap[,] bmp = DivideImageIntoTiles(tiles);
+            Bitmap[,] bmp = ComputeTiles(tiles);
 
             for (int x = 0; x < tiles; ++x)
                 for (int y = 0; y < tiles; ++y)
@@ -508,41 +497,6 @@ THRESHOLD G -> R:  {Settings.threshold_g}
                 }
         }
 
-        private static unsafe Bitmap[,] DivideImageIntoTiles(int tilecount)
-        {
-            static uint PixelTranslator(PIXEL* pixel, precision brightest)
-            {
-                static uint clamp(double value) => value < 0 ? 0u : value > 255 ? 255u : (uint)value;
-                double r = Math.Sqrt(pixel->R) * brightest;
-                double g = Math.Sqrt(pixel->G) * brightest;
-                double b = Math.Sqrt(pixel->B) * brightest;
-
-                return 0xff000000u
-                     | (clamp(r) << 16)
-                     | (clamp(g) << 8)
-                     | clamp(b);
-            }
-            ImageTiler<precision> tiler = new(_image, &PixelTranslator);
-            precision brightest = 0;
-
-            for (ulong i = 0, count = Settings.width * Settings.height; i < count; ++i)
-            {
-                PIXEL* pixel = _image[i];
-
-#if COMPLETE_BUDDHA
-                (pixel->R, pixel->G, pixel->B) = IterationToRGB(pixel->Iterations);
-#endif
-                brightest = Math.Max(brightest, pixel->R);
-                brightest = Math.Max(brightest, pixel->G);
-                brightest = Math.Max(brightest, pixel->B);
-            }
-
-            //brightest = (precision)(6000 / Math.Sqrt(brightest));
-            brightest = (precision)(512 / Math.Sqrt(brightest));
-
-            return tiler.GenerateTiles(tilecount, tilecount, (int)Settings.width, (int)Settings.height, brightest);
-        }
-
         private static void SetExifData(Bitmap bmp, int id, string value)
         {
             PropertyItem prop = (PropertyItem)FormatterServices.GetUninitializedObject(typeof(PropertyItem));
@@ -571,13 +525,7 @@ THRESHOLD G -> R:  {Settings.threshold_g}
                 PIXEL* pixel = _image[i];
 
                 wr.Write(pixel->Computed);
-#if COMPLETE_BUDDHA
                 wr.Write(pixel->Iterations);
-#else
-                wr.Write(pixel->R);
-                wr.Write(pixel->G);
-                wr.Write(pixel->B);
-#endif
             }
 
             wr.Flush();
@@ -588,24 +536,55 @@ THRESHOLD G -> R:  {Settings.threshold_g}
         }
 
         #endregion
-        #region RENDER / CALCULATION METHODS
+
+        private static unsafe Bitmap[,] ComputeTiles(int tilecount)
+        {
+            ImageTiler<precision> tiler = new(_image, &PixelTranslator);
+            precision mean = 0, stddev = 0;
+
+            for (ulong i = 0; i < _image.ItemCount; ++i)
+                mean += _image[i]->Iterations;
+
+            mean /= _image.ItemCount;
+
+            for (ulong i = 0; i < _image.ItemCount; ++i)
+            {
+                precision diff = _image[i]->Iterations - mean;
+
+                stddev += diff * diff;
+            }
+
+            stddev = (precision)Math.Sqrt(stddev / _image.ItemCount);
+
+            precision norm_factor = 1 / (precision)(mean + stddev);
+
+            return tiler.GenerateTiles(tilecount, tilecount, (int)Settings.width, (int)Settings.height, norm_factor);
+            static uint PixelTranslator(PIXEL* pixel, precision norm_factor)
+            {
+                precision iterations = pixel->Iterations * norm_factor;
+
+                if (iterations > 1)
+                    iterations = 1;
+                else if (!(iterations > 0))
+                    iterations = 0;
+
+                precision b = Math.Min(iterations - 5 * norm_factor, Settings.threshold_g);
+                precision g = Math.Min(iterations, Settings.threshold_r) - Settings.threshold_g;
+                precision r = iterations - Settings.threshold_r - Settings.threshold_g;
+                static uint to_byte(double value) => value < 0 ? 0u : value > 1 ? 255u : (uint)(value * 255);
+
+                if (Settings.grayscale)
+                    r = g = b = iterations;
+
+                return 0xff000000u
+                     | (to_byte(r) << 16)
+                     | (to_byte(g) << 8)
+                     | to_byte(b);
+            }
+        }
 
         private static void RenderImage()
         {
-#if COMPLETE_BUDDHA
-            _orbits = new Complex[Settings.cores, Settings.max_iter];
-            _orbit_indices = Enumerable.Repeat(-1, Settings.cores).ToArray();
-#endif
-
-
-#if COMPLETE_BUDDHA
-            int orbit_index = 0;
-
-            while (_orbit_indices[orbit_index] >= 0)
-                orbit_index = (orbit_index + 1) % Settings.cores;
-#endif
-
-
             Bounds i_bounds = Settings.bounds;
             Bounds m_bounds = Settings.mask.bounds;
             (int mask_width, int mask_height) = (_mask.GetLength(0), _mask.GetLength(1));
@@ -618,7 +597,6 @@ THRESHOLD G -> R:  {Settings.threshold_g}
                     {
                         ulong px = index % Settings.width;
                         ulong py = index / Settings.width;
-
 
                         for (int x_dpp = 0; x_dpp < Settings.dpp; ++x_dpp)
                         {
@@ -638,11 +616,33 @@ THRESHOLD G -> R:  {Settings.threshold_g}
                                 }
 
                                 if (compute)
-#if COMPLETE_BUDDHA
-                                    Calculate(new Complex(re, im), in i_bounds, orbit_index);
-#else
-                                    Calculate(new Complex(re, im), in i_bounds);
-#endif
+                                {
+                                    int iteration_count = 0;
+                                    Complex[] slices = new Complex[Settings.slice_count];
+                                    Complex z = 0;
+                                    Complex c = new(re, im);
+
+                                    do
+                                    {
+                                        z = z * z + c;
+
+                                        if (iteration_count - Settings.slice_offset is int i and >= 0 && i < slices.Length)
+                                            slices[i] = z;
+                                    }
+                                    while (Math.Abs(z.Real) < 2 && Math.Abs(z.Imaginary) < 2 && iteration_count++ < Settings.max_iter);
+
+                                    if (iteration_count < Settings.max_iter)
+                                        for (int slice = 0; slice < slices.Length; slice++)
+                                        {
+                                            Complex q = slices[slice];
+                                            ulong x_index = (ulong)((q.Real - i_bounds.left) * Settings.width / i_bounds.Width);
+                                            ulong y_index = (ulong)((q.Imaginary - i_bounds.top) * Settings.height / i_bounds.Height);
+
+                                            if (x_index >= 0 && x_index < Settings.width && y_index >= 0 && y_index < Settings.height)
+                                                _image[(y_index * Settings.width) + x_index]->Iterations += iteration_count - slice;
+                                            //  ++_image[(y_index * Settings.width) + x_index]->Iterations;
+                                        }
+                                }
                             }
 
                             _progress[core] = (index * (precision)Settings.dpp + x_dpp) / (total * (precision)Settings.dpp);
@@ -659,84 +659,6 @@ THRESHOLD G -> R:  {Settings.threshold_g}
 
             block.Complete();
             block.Completion.Wait();
-
-#if COMPLETE_BUDDHA
-            _orbit_indices[orbit_index] = -1;
-#endif
         }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static (ushort R, ushort G, ushort B) IterationToRGB(int iterations)
-        {
-            ushort r = 0, g = 0, b = (ushort)Math.Max(0, Math.Min(iterations - 5, Settings.threshold_g));
-
-            if (iterations > Settings.threshold_r + Settings.threshold_g)
-                r = (ushort)Math.Min(iterations - Settings.threshold_r - Settings.threshold_g, ushort.MaxValue);
-
-            if (iterations > Settings.threshold_g)
-                g = (ushort)(Math.Min(iterations, Settings.threshold_r) - Settings.threshold_g);
-
-            return (r, g, b);
-        }
-
-#if COMPLETE_BUDDHA
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static unsafe void Calculate(Complex c, in Bounds bounds, int orbit_index)
-        {
-            int iteration_count = 0;
-            Complex z = 0;
-
-            while (Math.Abs(z.Imaginary) < 2 && Math.Abs(z.Imaginary) < 2 && iteration_count < Settings.max_iter)
-                _orbits[orbit_index, iteration_count++] = z = (z * z) + c;
-
-            for (int i = 0; i < iteration_count; ++i)
-            {
-                Complex q = _orbits[orbit_index, i];
-                ulong x_index = (ulong)((q.Real - Settings.bounds.image.left) * Settings.width / Settings.bounds.image.Width);
-                ulong y_index = (ulong)((q.Imaginary - Settings.bounds.image.top) * Settings.height / Settings.bounds.image.Height);
-
-                if (x_index >= 0 && x_index < Settings.width && y_index >= 0 && y_index < Settings.height)
-                    ++_image[(y_index * Settings.width) + x_index]->Iterations;
-            }
-        }
-#else
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static unsafe void Calculate(Complex c, in Bounds bounds)
-        {
-            int iteration_count = Settings.slice_offset;
-            Complex z = 0;
-            Complex q;
-
-            for (int i = 0; i < iteration_count; ++i)
-                z = z * z + c;
-
-            q = z;
-
-            while (Math.Abs(z.Imaginary) < 2 && Math.Abs(z.Imaginary) < 2 && iteration_count < Settings.max_iter)
-            {
-                z = z * z + c;
-                ++iteration_count;
-            }
-
-            if (iteration_count < Settings.max_iter)
-            {
-                ulong x_index = (ulong)((q.Real - bounds.left) * Settings.width / bounds.Width);
-                ulong y_index = (ulong)((q.Imaginary - bounds.top) * Settings.height / bounds.Height);
-                ulong index = y_index * Settings.width + x_index;
-
-                if (x_index >= 0 && x_index < Settings.width && y_index >= 0 && y_index < Settings.height)
-                {
-                    (ushort R, ushort G, ushort B) = IterationToRGB(iteration_count);
-                    PIXEL* pixel = _image[index];
-
-                    pixel->R += R;
-                    pixel->G += G;
-                    pixel->B += B;
-                }
-            }
-        }
-#endif
-
-        #endregion
     }
 }
