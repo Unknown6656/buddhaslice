@@ -20,19 +20,20 @@
         "bottom": 1.1
     },
 
-    "max_iter": 4000,
+    "max_iter": 40,
     "slice_offset": 2,
-    "slice_count": 2,
+    "slice_count": 1,
     "dpp": 8,
-    "cores": 32,
+    "cores": 16,
 
-    "threshold_g": 40,
-    "threshold_r": 300,
+    "threshold_g": 0.1,
+    "threshold_r": 0.2,
+    "grayscale": true,
 
     "report_interval_ms": 250,
     "export": {
         "interval_ms": 600000,
-        "raw": true,
+        "raw": false,
         "png": true,
         "raw_at_end": true,
         "path_raw": "memory.dump",

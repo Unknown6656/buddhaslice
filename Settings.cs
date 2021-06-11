@@ -21,8 +21,10 @@ namespace buddhaslice
         public int slice_count;
         public int dpp;
         public int cores;
-        public ushort threshold_g;
-        public ushort threshold_r;
+        public precision threshold_g;
+        public precision threshold_r;
+        public precision scale_factor;
+        public bool grayscale;
         public int report_interval_ms;
         public ExportSettings export;
 
