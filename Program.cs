@@ -1,4 +1,10 @@
-﻿//#define COMPLETE_BUDDHA
+//#define COMPLETE_BUDDHA
+
+#if DOUBLE_PRECISION
+global using precision = System.Double;
+#else
+global using precision = System.Single;
+#endif
 
 using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
@@ -19,14 +25,6 @@ using System;
 using Unknown6656.BigFuckingAllocator;
 using Unknown6656.Common;
 using Unknown6656.IO;
-using System.CodeDom;
-
-
-#if DOUBLE_PRECISION
-using precision = System.Double;
-#else
-using precision = System.Single;
-#endif
 
 
 namespace buddhaslice;

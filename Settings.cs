@@ -1,12 +1,5 @@
-﻿using System.Runtime.CompilerServices;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
-
-
-#if DOUBLE_PRECISION
-using precision = System.Double;
-#else
-using precision = System.Single;
-#endif
 
 namespace buddhaslice;
 
