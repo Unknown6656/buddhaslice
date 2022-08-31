@@ -1,6 +1,4 @@
-﻿#nullable enable
-
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using System.Drawing.Imaging;
 using System.Drawing;
