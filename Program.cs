@@ -19,6 +19,7 @@ using System;
 using Unknown6656.BigFuckingAllocator;
 using Unknown6656.Common;
 using Unknown6656.IO;
+using System.CodeDom;
 
 
 #if DOUBLE_PRECISION
@@ -119,7 +120,7 @@ public static class Program
 
     private static async Task ProgressReporterTask()
     {
-        const int WIDTH = 180;
+        const int WIDTH = 195;
 
         Console.Title = "BUDDHASLICE - by Unknown6656";
         Console.ForegroundColor = ConsoleColor.Gray;
@@ -129,7 +130,7 @@ public static class Program
         Console.BufferWidth = Math.Max(WIDTH, Console.BufferWidth);
         Console.WindowWidth = WIDTH;
         Console.BufferHeight = Math.Max(WIDTH * 2, Console.BufferHeight);
-        Console.WindowHeight = Math.Max(WIDTH / 3, Console.WindowHeight);
+        Console.WindowHeight = Math.Max(WIDTH / 4, Console.WindowHeight);
         Console.WriteLine(new string('═', WIDTH));
 
         int top_progress = Console.CursorTop;
@@ -172,22 +173,33 @@ public static class Program
             Console.CursorLeft--;
         }
 
-        ++Console.CursorTop;
-        Console.Write('╩');
-
         ++top_progress;
 
         Console.CursorTop = tmp;
         Console.CursorLeft = 0;
-        Console.WriteLine(new string('═', WIDTH));
+        Console.Write(new string('═', WIDTH));
+        Console.CursorLeft = WIDTH / 2 - 1;
+        Console.WriteLine('╩');
         Console.ForegroundColor = ConsoleColor.White;
         Console.WriteLine("  THREADS:");
 
         int top_threads = Console.CursorTop;
-        int t_per_row = (WIDTH - 12) / 14;
-        (int l, int t) get_thread_pos(int rank) => (6 + (rank % t_per_row) * 13, top_threads + rank / t_per_row);
+        int threads_b10 = (int)Math.Ceiling(Math.Log10(Settings.cores));
+        int threads_label_sz = 19 + threads_b10;
+        int t_per_row = (WIDTH - 12) / (threads_label_sz + 1);
+        (int l, int t) get_thread_pos(int rank) => (12 + (rank % t_per_row) * threads_label_sz, top_threads + rank / t_per_row);
+
+        for (int i = 0; i < Settings.cores; ++i)
+        {
+            (int left, int top) = get_thread_pos(i);
+            Console.CursorLeft = left - threads_b10 - 4;
+            Console.CursorTop = top;
+            Console.ForegroundColor = ConsoleColor.White;
+            Console.Write($"[{i.ToString("D" + threads_b10)}:              ]");
+        }
 
         Console.CursorTop = get_thread_pos(Settings.cores + 1).t + 1;
+        Console.CursorLeft = 0;
         Console.ForegroundColor = ConsoleColor.Gray;
         Console.WriteLine(new string('═', WIDTH));
         Console.ForegroundColor = ConsoleColor.White;
@@ -269,22 +281,23 @@ public static class Program
                 for (int i = 0; i < Settings.cores; ++i)
                 {
                     (Console.CursorLeft, Console.CursorTop) = get_thread_pos(i);
+                    Console.CursorLeft--;
                     precision p = (precision)Math.Round(_progress[i] * 100, 8);
 
                     if (p == 0)
                     {
                         Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.Write(" 0.00000000%");
+                        Console.Write("  0.00000000%");
                     }
                     else if (p < 100)
                     {
                         Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.Write($"{p,11:N8}%");
+                        Console.Write($" {p,11:N8}%");
                     }
                     else
                     {
                         Console.ForegroundColor = ConsoleColor.DarkGreen;
-                        Console.Write("100.0000000%");
+                        Console.Write("100.00000000%");
                     }
                 }
 
@@ -476,7 +489,7 @@ public static class Program
 
                 SetExifData(b, 0x0131, "Buddhaslice by Unknown6656");
                 SetExifData(b, 0x013b, "Unknown6656");
-                SetExifData(b, 0x8298, "Copyright (c) 2019, Unknown6656");
+                SetExifData(b, 0x8298, $"Copyright (c) 2019-{DateTime.UtcNow.Year}, Unknown6656");
                 SetExifData(b, 0x010e, $@"
 WIDTH:             {Settings.width:N0} px
 HEIGHT:            {Settings.height:N0} px
@@ -490,6 +503,7 @@ TILE HEIGHT:       {b.Height}
 MASK PATH:         ""{Settings.mask.path}""
 THRESHOLD B -> G:  {Settings.threshold_r}
 THRESHOLD G -> R:  {Settings.threshold_g}
+CURRENT TIME:      {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}
 ".Trim());
 
                 b.Save(path, ImageFormat.Png);
