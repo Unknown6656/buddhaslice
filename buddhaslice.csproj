@@ -1,10 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
     <PropertyGroup>
-        <TargetFramework>net6.0-windows</TargetFramework>
+        <TargetFramework>net7.0-windows</TargetFramework>
 
         <LangVersion>preview</LangVersion>
         <Nullable>enable</Nullable>
         <NullableContextOptions>enable</NullableContextOptions>
+        <EnablePreviewFeatures>True</EnablePreviewFeatures>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
         <OutputType>Exe</OutputType>
@@ -16,7 +17,6 @@
         <!-- <TrimMode>Link</TrimMode> -->
         <Deterministic>true</Deterministic>
         <!--<Deterministic>false</Deterministic>-->
-        <PublishTrimmed>true</PublishTrimmed>
         <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
         <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
         <GenerateSerializationAssemblies>Auto</GenerateSerializationAssemblies>
@@ -35,15 +35,15 @@
         <DefineConstants>DEBUG;TRACE</DefineConstants>
     </PropertyGroup>
     <ItemGroup>
-      <PackageReference Include="Unknown6656.BigFuckingAllocator" Version="1.0.0" />
-      <PackageReference Include="Unknown6656.Core" Version="1.0.21.2" />
+        <PackageReference Include="Unknown6656.BigFuckingAllocator" Version="1.0.0" />
+        <PackageReference Include="Unknown6656.Core" Version="1.1.0" />
     </ItemGroup>
     <ItemGroup>
-      <None Update="mask.png">
-        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      </None>
-      <None Update="settings.json">
-        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      </None>
+        <None Update="mask.png">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="settings.json">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
     </ItemGroup>
 </Project>
