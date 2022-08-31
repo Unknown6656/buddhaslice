@@ -1,4 +1,4 @@
-//#define COMPLETE_BUDDHA
+﻿//#define COMPLETE_BUDDHA
 
 #if DOUBLE_PRECISION
 global using precision = System.Double;
@@ -23,9 +23,12 @@ using System.IO;
 using System;
 
 using Unknown6656.BigFuckingAllocator;
+using Unknown6656.Imaging;
 using Unknown6656.Common;
 using Unknown6656.IO;
 
+using ColorMap = Unknown6656.Imaging.ColorMap;
+using Unknown6656.Imaging.Effects;
 
 namespace buddhaslice;
 
@@ -118,7 +121,7 @@ public static class Program
 
     private static async Task ProgressReporterTask()
     {
-        const int WIDTH = 195;
+        const int WIDTH = 205;
 
         Console.Title = "BUDDHASLICE - by Unknown6656";
         Console.ForegroundColor = ConsoleColor.Gray;
@@ -135,26 +138,30 @@ public static class Program
         int left_progress = WIDTH / 2 + 2;
 
         Console.ForegroundColor = ConsoleColor.White;
-        Console.WriteLine($@"  RENDER CONFIGURATION:
-       WIDTH:             {Settings.width:N0} px
-       HEIGHT:            {Settings.height:N0} px
-       TOTAL PIXELS:      {Settings.height * Settings.width:N0} px
-       TOTAL COMPLEX OPS: {Settings.height * Settings.width * (ulong)(Settings.dpp * Settings.dpp * (Settings.max_iter + Settings.slice_offset) * Settings.slice_count):N0}
-       ITERATIONS:        {Settings.max_iter:N0}
-       PIXELS PER THREAD: {Settings.height * Settings.width / (ulong)Settings.cores:N0} px
-       THREADS:           {Settings.cores} (+ 1)
-       DPP:               {Settings.dpp}
-       SLICE LEVELS:      {Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}
-       SNAPSHOT INTERVAL: {Settings.export.interval_ms / 1000d}s
-       MAX. IMAGE SIZE:   {Settings.export.max_image_size:N2} px
-       MASK PATH:         ""{Settings.mask.path}""
-       OUTPUT PNG PATH:   ""{Settings.export.path_png}""
-       OUTPUT RAW PATH:   ""{Settings.export.path_raw}""
-       EXPORT PNG:        {Settings.export.png}
-       EXPORT RAW:        {Settings.export.raw}
-       EXPORT RAW AT END: {Settings.export.raw_at_end}
-       THRESHOLD B -> G:  {Settings.threshold_g}
-       THRESHOLD G -> R:  {Settings.threshold_r}");
+        Console.WriteLine($"""
+        RENDER CONFIGURATION:
+            WIDTH:             {Settings.width:N0} px
+            HEIGHT:            {Settings.height:N0} px
+            TOTAL PIXELS:      {Settings.height * Settings.width:N0} px
+            TOTAL COMPLEX OPS: {Settings.height * Settings.width * (ulong)(Settings.dpp * Settings.dpp * (Settings.max_iter + Settings.slice_offset) * Settings.slice_count):N0}
+            ITERATIONS:        {Settings.max_iter:N0}
+            PIXELS PER THREAD: {Settings.height * Settings.width / (ulong)Settings.cores:N0} px
+            THREADS:           {Settings.cores} (+ 1)
+            DPP:               {Settings.dpp}
+            SLICE LEVELS:      {Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}
+            SNAPSHOT INTERVAL: {Settings.export.interval_ms / 1000d}s
+            MAX. IMAGE SIZE:   {Settings.export.max_image_size:N2} px
+            MASK PATH:         "{Settings.mask.path}"
+            OUTPUT PNG PATH:   "{Settings.export.path_png}"
+            OUTPUT RAW PATH:   "{Settings.export.path_raw}"
+            EXPORT PNG:        {Settings.export.png}
+            EXPORT RAW:        {Settings.export.raw}
+            EXPORT RAW AT END: {Settings.export.raw_at_end}
+            THRESHOLD B -> G:  {(Settings.grayscale ? "[grayscale] " : "") + Settings.threshold_g}
+            THRESHOLD G -> R:  {(Settings.grayscale ? "[grayscale] " : "") + Settings.threshold_r}
+            COLOR MAP:         {(Settings.grayscale ? "" : "[manual] ") + Settings.color_map}
+            GRAYSCALE:         {Settings.grayscale}
+        """);
 
         int tmp = Console.CursorTop;
 
@@ -483,28 +490,40 @@ public static class Program
             for (int y = 0; y < tiles; ++y)
             {
                 string path = string.Format(Settings.export.path_png, x, y);
-                using Bitmap b = bmp[x, y];
+                Bitmap b = bmp[x, y];
 
-                SetExifData(b, 0x0131, "Buddhaslice by Unknown6656");
-                SetExifData(b, 0x013b, "Unknown6656");
-                SetExifData(b, 0x8298, $"Copyright (c) 2019-{DateTime.UtcNow.Year}, Unknown6656");
-                SetExifData(b, 0x010e, $@"
-WIDTH:             {Settings.width:N0} px
-HEIGHT:            {Settings.height:N0} px
-ITERATIONS:        {Settings.max_iter:N0}
-CORES:             {Settings.cores}
-DPP:               {Settings.dpp}
-SLICE LEVELS:      {Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}
-TILE (X, Y):       ({x}, {y})
-TILE WIDTH:        {b.Width}
-TILE HEIGHT:       {b.Height}
-MASK PATH:         ""{Settings.mask.path}""
-THRESHOLD B -> G:  {Settings.threshold_r}
-THRESHOLD G -> R:  {Settings.threshold_g}
-CURRENT TIME:      {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}
-".Trim());
+                if (Settings.grayscale && Settings.color_map is string name)
+                    try
+                    {
+                        if (typeof(ColorMap).GetProperty(name, BindingFlags.Public | BindingFlags.Static)?.GetValue(null) is ColorMap map)
+                            b = b.ApplyEffect(new Colorize(map));
+                    }
+                    catch
+                    {
+                    }
 
-                b.Save(path, ImageFormat.Png);
+                using (b)
+                {
+                    SetExifData(b, 0x0131, "Buddhaslice by Unknown6656");
+                    SetExifData(b, 0x013b, "Unknown6656");
+                    SetExifData(b, 0x8298, $"Copyright (c) 2019-{DateTime.UtcNow.Year}, Unknown6656");
+                    SetExifData(b, 0x010e, $"""
+                    WIDTH:               {Settings.width:N0} px
+                    HEIGHT:              {Settings.height:N0} px
+                    ITERATIONS:          {Settings.max_iter:N0}
+                    CORES:               {Settings.cores}
+                    DPP:                 {Settings.dpp}
+                    SLICE LEVELS:        {Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}
+                    TILE (X, Y):         ({x}, {y})
+                    TILE WIDTH:          {b.Width}
+                    TILE HEIGHT:         {b.Height}
+                    MASK PATH:           "{Settings.mask.path}"
+                    THRESHOLD B -> G:    {Settings.threshold_r}
+                    THRESHOLD G -> R:    {Settings.threshold_g}
+                    SAVING TIME (LOCAL): {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}
+                    """);
+                    b.Save(path, ImageFormat.Png);
+                }
 
                 _queue_rendered.Enqueue((path, true));
             }
