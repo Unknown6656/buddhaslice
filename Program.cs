@@ -1,4 +1,6 @@
 ﻿//#define COMPLETE_BUDDHA
+//#define DOUBLE_PRECISION
+
 
 #if DOUBLE_PRECISION
 global using precision = System.Double;
@@ -29,6 +31,7 @@ using Unknown6656.Common;
 using Unknown6656.IO;
 
 using ColorMap = Unknown6656.Imaging.ColorMap;
+using System.Runtime.InteropServices;
 
 namespace buddhaslice;
 
@@ -44,6 +47,7 @@ public struct PIXEL
 public static class Program
 {
     public const string PATH_CONFIG = "settings.json";
+    public const string PATH_NATIVE = "native.dll";
 
     public static Settings Settings { get; private set; }
 
@@ -646,7 +650,28 @@ public static class Program
         block.Completion.Wait();
     }
 
-    private static void RenderImageCore(
+
+    [DllImport(PATH_NATIVE, CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe void render_image_core(
+        ulong batches,
+        ulong batch,
+        int mask_width,
+        int mask_height,
+        Bounds* i_bounds,
+        Bounds* m_bounds,
+        ulong image_width,
+        ulong image_height,
+        int dpp,
+        int slice_offset,
+        int slice_count,
+        int max_iter,
+        Func<int, int, bool> _mask,
+        Action<int, precision> _progress,
+        Action<ulong, int> _image,
+        Action<ulong> _computed
+    );
+
+    private static void RenderImageCore_Managed(
         ulong batches,
         ulong batch,
         int mask_width,
@@ -661,7 +686,7 @@ public static class Program
         int max_iter
     )
     {
-        for (ulong index = batch, total = _image.ItemCount; index < total; index += batches)
+        for (ulong index = batch, total = image_width * image_height; index < total; index += batches)
             unsafe
             {
                 ulong px = index % image_width;
