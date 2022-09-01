@@ -15,6 +15,7 @@ public record struct Settings(
     int dpp,
     int batches,
     int cores,
+    bool native,
     precision threshold_g,
     precision threshold_r,
     precision scale_factor,
@@ -46,6 +47,7 @@ public record struct Settings(
         cores = 8,
         dpp = 16,
 #endif
+        native = false,
         slice_offset = 8,
         slice_count = 1,
         report_interval_ms = 500,

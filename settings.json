@@ -9,6 +9,8 @@
         }
     },
 
+    "native": true,
+
     "width": 1920,
     "height": 1584,
     //"width": 19200,
