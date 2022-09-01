@@ -13,12 +13,14 @@ public record struct Settings(
     int slice_offset,
     int slice_count,
     int dpp,
+    int batches,
     int cores,
     precision threshold_g,
     precision threshold_r,
     precision scale_factor,
     bool grayscale,
     string? color_map,
+    bool reverse_color_map,
     int report_interval_ms,
     ExportSettings export
 )
@@ -35,7 +37,7 @@ public record struct Settings(
         width = 3840,
         height = 2160,
         max_iter = 10000,
-        cores = 8,
+        batches = 8,
         dpp = 3,
 #else
         width = 28_800,
@@ -50,6 +52,7 @@ public record struct Settings(
         threshold_g = 40,
         threshold_r = 300,
         color_map = "jet",
+        reverse_color_map = true,
         export = new()
         {
             interval_ms = 360_000,

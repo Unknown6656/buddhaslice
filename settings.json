@@ -24,12 +24,14 @@
     "slice_offset": 0,
     "slice_count": 1,
     "dpp": 8,
-    "cores": 16,
+    "batches": 30,
+    "cores": -1,
 
     "threshold_g": 40,
     "threshold_r": 300,
     "grayscale": true,
-    "color_map": "jet", // either "null" or the name of the color map
+    "color_map": "inferno", // either "null" or the name of the color map
+    "reverse_color_map": false,
 
     "report_interval_ms": 250,
     "export": {
