@@ -32,6 +32,8 @@ using Unknown6656.IO;
 
 using ColorMap = Unknown6656.Imaging.ColorMap;
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
+using Unknown6656.Controls.Console;
 
 namespace buddhaslice;
 
@@ -141,51 +143,63 @@ public static class Program
 
         int top_progress = Console.CursorTop;
         int left_progress = WIDTH / 2 + 2;
+        const int ALIGN = 30;
 
         Console.ForegroundColor = ConsoleColor.White;
         Console.WriteLine($"""
-          RENDER CONFIGURATION:
-            WIDTH:             {Settings.width:N0} px
-            HEIGHT:            {Settings.height:N0} px
-            TOTAL PIXELS:      {Settings.height * Settings.width:N0} px
-            TOTAL COMPLEX OPS: {Settings.height * Settings.width * (ulong)(Settings.dpp * Settings.dpp * (Settings.max_iter + Settings.slice_offset) * Settings.slice_count):N0}
-            ITERATIONS:        {Settings.max_iter:N0}
-            PIXELS PER THREAD: {Settings.height * Settings.width / (ulong)Settings.batches:N0} px
-            THREADS:           {Settings.batches} (+ 1)
-            DPP:               {Settings.dpp}
-            SLICE LEVELS:      {Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}
-            SNAPSHOT INTERVAL: {Settings.export.interval_ms / 1000d}s
-            MAX. IMAGE SIZE:   {Settings.export.max_image_size:N2} px
-            MASK PATH:         "{Settings.mask.path}"
-            OUTPUT PNG PATH:   "{Settings.export.path_png}"
-            OUTPUT RAW PATH:   "{Settings.export.path_raw}"
-            EXPORT PNG:        {Settings.export.png}
-            EXPORT RAW:        {Settings.export.raw}
-            EXPORT RAW AT END: {Settings.export.raw_at_end}
-            THRESHOLD B -> G:  {(Settings.grayscale ? "[mapped] " : "") + Settings.threshold_g}
-            THRESHOLD G -> R:  {(Settings.grayscale ? "[mapped] " : "") + Settings.threshold_r}
-            GRAYSCALE:         {(Settings.grayscale ? "[mapped] " : "") + Settings.grayscale}
-            COLOR MAP:         {(Settings.grayscale ? "" : "[manual] ") + Settings.color_map}
+            RENDER CONFIGURATION:
+                WIDTH:                {Settings.width,ALIGN:N0} px
+                HEIGHT:               {Settings.height,ALIGN:N0} px
+                TOTAL PIXELS:         {Settings.height * Settings.width,ALIGN:N0} px
+                TOTAL COMPLEX OPS:    {Settings.height * Settings.width * (ulong)(Settings.dpp * Settings.dpp * (Settings.max_iter + Settings.slice_offset) * Settings.slice_count),ALIGN:N0} c.ops
+                COMPUTATION ENGINE:   {(Settings.native ? "native (C, MSVC)" : "managed (C#, .NET)"),ALIGN}
+                FLOAT SIZE:           {sizeof(precision),ALIGN} B ({(sizeof(precision) == sizeof(float) ? "single" : "double")} precision)
+                ITERATIONS:           {Settings.max_iter,ALIGN:N0}
+                PIXELS PER THREAD:    {Settings.height * Settings.width / (ulong)Settings.batches,ALIGN:N0} px
+                THREADS:              {Settings.batches,ALIGN} (+ 1)
+                DPP:                  {Settings.dpp,ALIGN}
+                SLICE LEVELS:         {$"{Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}",ALIGN}
+                SNAPSHOT INTERVAL:    {Settings.export.interval_ms / 1000d,ALIGN} s
+                MAX. IMAGE SIZE:      {Settings.export.max_image_size,ALIGN:N0} px
+                MASK PATH:            {'"' + Settings.mask.path,ALIGN}"
+                OUTPUT PNG PATH:      {'"' + Settings.export.path_png,ALIGN}"
+                OUTPUT RAW PATH:      {'"' + Settings.export.path_raw,ALIGN}"
+                EXPORT PNG:           {Settings.export.png,ALIGN}
+                EXPORT RAW:           {Settings.export.raw,ALIGN}
+                EXPORT RAW AT END:    {Settings.export.raw_at_end,ALIGN}
+                THRESHOLD B -> G:     {(Settings.grayscale ? "[mapped] " : "") + Settings.threshold_g,ALIGN}
+                THRESHOLD G -> R:     {(Settings.grayscale ? "[mapped] " : "") + Settings.threshold_r,ALIGN}
+                GRAYSCALE:            {(Settings.grayscale ? "[mapped] " : "") + Settings.grayscale,ALIGN}
+                COLOR MAP:            {(Settings.grayscale ? "" : "[manual] ") + Settings.color_map,ALIGN}
         """);
 
-        int tmp = Console.CursorTop;
+        int bottom_progress = Console.CursorTop;
 
         Console.CursorLeft = WIDTH / 2 - 1;
         Console.ForegroundColor = ConsoleColor.Gray;
         Console.CursorTop = top_progress - 1;
-        Console.Write('╦');
-        Console.CursorLeft--;
 
-        for (int t = top_progress; t < tmp; ++t)
-        {
-            Console.CursorTop = t;
-            Console.Write('║');
-            Console.CursorLeft--;
-        }
+        ConsoleExtensions.WriteVertical('╦' + new string('║', bottom_progress - top_progress));
 
-        ++top_progress;
+        (int progress_text_width, _) = ConsoleExtensions.WriteBlock("""
+        CURRENT PROGRESS:
+            CURRENT TIME:
+            ELAPSED TIME:
+            REMAINING TIME (ESTIMATED):
+            IMAGE SIZE:
+            TOTAL PROGRESS:
+            CURRENT SPEED:
+        
+        
+            CURRENT MEMORY FOOTPRINT:
+            MAXIMUM MEMORY FOOTPRINT:
+            CURRENT CPU USAGE:
+        """, (left_progress, top_progress));
 
-        Console.CursorTop = tmp;
+        left_progress += progress_text_width + 3;
+        top_progress++;
+
+        Console.CursorTop = bottom_progress;
         Console.CursorLeft = 0;
         Console.Write(new string('═', WIDTH));
         Console.CursorLeft = WIDTH / 2 - 1;
@@ -248,141 +262,141 @@ public static class Program
         int updatememory = 0;
 
         do
-            if (sw_save.ElapsedMilliseconds >= Settings.export.interval_ms)
+            try
             {
-                sw_save.Stop();
-                sw_save.Reset();
-
-                Console.CursorLeft = 6;
-                Console.CursorTop = top_exports;
-                Console.ForegroundColor = ConsoleColor.DarkGray;
-                Console.Write($"[{DateTime.Now:HH:mm:ss.fff}] ");
-                Console.ForegroundColor = ConsoleColor.White;
-                Console.Write($"Saving snapshot ...");
-
-                ++top_exports;
-
-                _ = Task.Factory.StartNew(() =>
+                if (sw_save.ElapsedMilliseconds >= Settings.export.interval_ms)
                 {
-                    SaveSnapshot(false);
+                    sw_save.Stop();
+                    sw_save.Reset();
 
-                    sw_save.Restart();
-                }); // we do NOT want to await this task!
-            }
-            else if (sw_report.ElapsedMilliseconds >= Settings.report_interval_ms)
-            {
-                TimeSpan elapsed = sw_total.Elapsed;
-                precision progr = _progress.Sum() / Settings.batches;
-                string est_rem = progr < 1e-5 ? "∞" : $"{TimeSpan.FromMilliseconds(elapsed.TotalMilliseconds / progr) - elapsed:dd':'hh':'mm':'ss}.00";
+                    Console.CursorLeft = 6;
+                    Console.CursorTop = top_exports;
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.Write($"[{DateTime.Now:HH:mm:ss.fff}] ");
+                    Console.ForegroundColor = ConsoleColor.White;
+                    Console.Write($"Saving snapshot ...");
 
-                Console.CursorLeft = left_progress;
-                Console.CursorTop = top_progress;
-                Console.ForegroundColor = ConsoleColor.White;
-                Console.WriteLine($"CURRENT TIME:                  {DateTime.Now:HH:mm:ss.ff}");
-                Console.CursorLeft = left_progress;
-                Console.WriteLine($"ELAPSED TIME:               {elapsed:dd':'hh':'mm':'ss'.'ff}");
-                Console.CursorLeft = left_progress;
-                Console.WriteLine($"REMAINING TIME (ESTIMATED): {est_rem}");
+                    ++top_exports;
 
-                if (updatememory == 0)
+                    _ = Task.Factory.StartNew(() =>
+                    {
+                        SaveSnapshot(false);
+
+                        sw_save.Restart();
+                    }); // we do NOT want to await this task!
+                }
+                else if (sw_report.ElapsedMilliseconds >= Settings.report_interval_ms)
                 {
-                    long mem = Process.GetCurrentProcess().WorkingSet64;
+                    TimeSpan elapsed = sw_total.Elapsed;
+                    precision progr = _progress.Sum() / Settings.batches;
+                    string est_rem = progr < 1e-5 ? "∞" : $"{TimeSpan.FromMilliseconds(elapsed.TotalMilliseconds / progr) - elapsed:dd':'hh':'mm':'ss}.00";
+                    double pixels_per_sec = (progr - oldp) * Settings.height * Settings.width * 1000d / sw_report.ElapsedMilliseconds;
 
-                    max_mem = Math.Max(mem, max_mem);
+                    Console.CursorTop = top_progress;
+                    Console.CursorLeft = left_progress;
+                    Console.ForegroundColor = ConsoleColor.White;
+                    ConsoleExtensions.WriteBlock($"""
+                        {DateTime.Now:HH:mm:ss.ff}
+                        {elapsed:dd':'hh':'mm':'ss'.'ff}
+                        {est_rem}
+                        {progr * 100,11:N5} %
+                        {_image.BinarySize / 1048576d,11:N2} MB
+                        {pixels_per_sec,11:N0} px/s
+                        {pixels_per_sec * sizeof(precision) / 341.333,11:N0} kB/s
+                        """, (left_progress, top_progress));
 
-                    Console.CursorLeft = left_progress;
-                    Console.WriteLine($"CURRENT MEMORY FOOTPRINT:      {mem / 1048576d,11:N2} MB");
-                    Console.CursorLeft = left_progress;
-                    Console.WriteLine($"MAXIMUM MEMORY FOOTPRINT:      {max_mem / 1048576d,11:N2} MB");
+                    if (updatememory == 0)
+                    {
+                        long mem = Process.GetCurrentProcess().WorkingSet64;
+
+                        max_mem = Math.Max(mem, max_mem);
+
+                        Console.CursorTop = top_progress + 8;
+                        Console.CursorLeft = left_progress;
+                        Console.WriteLine($"{mem / 1048576d,11:N2} MB");
+                        Console.CursorLeft = left_progress;
+                        Console.WriteLine($"{max_mem / 1048576d,11:N2} MB");
+
+                        // TODO : update CPU cores
+                        // TODO : CPU and RAM progress bars
+                    }
+
+                    for (int i = 0; i <= Settings.batches; ++i)
+                    {
+                        (int left, int top, int progress_total_width) = get_thread_pos(i);
+
+                        Console.CursorLeft = left;
+                        Console.CursorTop = top;
+                        precision progress = i < Settings.batches ? _progress[i] : progr;
+                        precision p = (precision)Math.Round(progress * 100, 8);
+                        int progress_width = (int)Math.Round(progress * progress_total_width);
+
+                        if (p == 0)
+                        {
+                            Console.ForegroundColor = ConsoleColor.DarkGray;
+                            Console.Write("  0.00000000 %");
+                        }
+                        else if (p < 100)
+                        {
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.Write($" {p,11:N8} %");
+                        }
+                        else
+                        {
+                            Console.ForegroundColor = ConsoleColor.DarkGreen;
+                            Console.Write("100.00000000 %");
+                        }
+
+                        ++Console.CursorLeft;
+
+                        if (progress_width > 0)
+                            Console.Write(new String('━', progress_width));
+
+                        if ((progress_total_width - progress_width) is int remaining and > 0)
+                        {
+                            Console.ForegroundColor = ConsoleColor.DarkGray;
+                            Console.Write(new String('━', remaining));
+                        }
+                    }
+
+                    while (_queue_rendered.TryDequeue(out (string file, bool finished) export))
+                    {
+                        Console.CursorLeft = 6;
+                        Console.CursorTop = top_exports;
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.Write($"[{DateTime.Now:HH:mm:ss.fff}] ");
+                        Console.ForegroundColor = ConsoleColor.White;
+                        Console.Write($"{(export.finished ? "Finished" : "Began")} exporting '{export.file}'.");
+
+                        ++top_exports;
+                    }
+
+                    if (!fin && progr == 1)
+                    {
+                        Console.CursorLeft = 6;
+                        Console.CursorTop = top_exports;
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.Write($"[{DateTime.Now:HH:mm:ss.fff}] ");
+                        Console.ForegroundColor = ConsoleColor.White;
+                        Console.Write("Finished rendering. Saving final result ...");
+
+                        ++top_exports;
+
+                        fin = true;
+                    }
+
+                    updatememory = (updatememory + 1) % 3;
+                    oldp = progr;
+
+                    sw_report.Restart();
                 }
                 else
-                    Console.CursorTop += 2;
-
-                // TODO : update CPU cores
-
-                Console.CursorLeft = left_progress;
-                Console.WriteLine($"IMAGE SIZE:                    {_image.BinarySize / 1048576d,11:N2} MB");
-                Console.CursorLeft = left_progress;
-                Console.WriteLine($"TOTAL PROGRESS:                {progr * 100,11:N5} %");
-                Console.CursorLeft = left_progress;
-
-                double pixels_per_sec = (progr - oldp) * Settings.height * Settings.width * 1000d / sw_report.ElapsedMilliseconds;
-
-                Console.WriteLine($"CURRENT SPEED:                 {pixels_per_sec,11:N0} px/s");
-                Console.CursorLeft = left_progress;
-                Console.WriteLine($"                               {pixels_per_sec * sizeof(precision) / 341.333,11:N0} kB/s");
-
-                for (int i = 0; i <= Settings.batches; ++i)
-                {
-                    (int left, int top, int progress_total_width) = get_thread_pos(i);
-
-                    Console.CursorLeft = left;
-                    Console.CursorTop = top;
-                    precision progress = i < Settings.batches ? _progress[i] : _progress.Average();
-                    precision p = (precision)Math.Round(progress * 100, 8);
-                    int progress_width = (int)Math.Round(progress * progress_total_width);
-
-                    if (p == 0)
-                    {
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.Write("  0.00000000 %");
-                    }
-                    else if (p < 100)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.Write($" {p,11:N8} %");
-                    }
-                    else
-                    {
-                        Console.ForegroundColor = ConsoleColor.DarkGreen;
-                        Console.Write("100.00000000 %");
-                    }
-
-                    ++Console.CursorLeft;
-
-                    if (progress_width > 0)
-                        Console.Write(new String('━', progress_width));
-
-                    if ((progress_total_width - progress_width) is int remaining and > 0)
-                    {
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.Write(new String('━', remaining));
-                    }
-                }
-
-                while (_queue_rendered.TryDequeue(out (string file, bool finished) export))
-                {
-                    Console.CursorLeft = 6;
-                    Console.CursorTop = top_exports;
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.Write($"[{DateTime.Now:HH:mm:ss.fff}] ");
-                    Console.ForegroundColor = ConsoleColor.White;
-                    Console.Write($"{(export.finished ? "Finished" : "Began")} exporting '{export.file}'.");
-
-                    ++top_exports;
-                }
-
-                if (!fin && progr == 1)
-                {
-                    Console.CursorLeft = 6;
-                    Console.CursorTop = top_exports;
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.Write($"[{DateTime.Now:HH:mm:ss.fff}] ");
-                    Console.ForegroundColor = ConsoleColor.White;
-                    Console.Write("Finished rendering. Saving final result ...");
-
-                    ++top_exports;
-
-                    fin = true;
-                }
-
-                updatememory = (updatememory + 1) % 3;
-                oldp = progr;
-
-                sw_report.Restart();
+                    await Task.Delay(Settings.report_interval_ms / 3);
             }
-            else
-                await Task.Delay(Settings.report_interval_ms / 3);
+            catch (Exception ex)
+            {
+                Debugger.Break();
+            }
         while (_isrunning);
 
         Console.CursorLeft = 0;
@@ -617,7 +631,7 @@ public static class Program
         }
     }
 
-    private static void RenderImage()
+    private static unsafe void RenderImage()
     {
         ulong batches = (ulong)Settings.batches;
         int cores = Settings.cores;
@@ -628,20 +642,55 @@ public static class Program
         if (Environment.ProcessorCount is int cpu_cores)
             cores = Math.Min(cpu_cores > 4 ? cpu_cores - 1 : cpu_cores, cores);
 
-        ActionBlock<ulong> block = new(batch => RenderImageCore(
-            batches,
-            batch,
-            mask_width: _mask.GetLength(0),
-            mask_height: _mask.GetLength(1),
-            i_bounds: Settings.bounds,
-            m_bounds: Settings.mask.bounds,
-            image_width: Settings.width,
-            image_height: Settings.height,
-            dpp: Settings.dpp,
-            slice_offset: Settings.slice_offset,
-            slice_count: Settings.slice_count,
-            max_iter: Settings.max_iter
-        ), new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = cores });
+        int mask_width = _mask.GetLength(0);
+        int mask_height = _mask.GetLength(1);
+        ulong image_width = Settings.width;
+        ulong image_height = Settings.height;
+        int dpp = Settings.dpp;
+        int slice_offset = Settings.slice_offset;
+        int slice_count = Settings.slice_count;
+        int max_iter = Settings.max_iter;
+
+        ActionBlock<ulong> block = new(batch =>
+        {
+            Bounds i_bounds = Settings.bounds;
+            Bounds m_bounds = Settings.mask.bounds;
+
+            if (Settings.native)
+                RenderImageCore_Native(
+                    batches,
+                    batch,
+                    mask_width,
+                    mask_height,
+                    &i_bounds,
+                    &m_bounds,
+                    image_width,
+                    image_height,
+                    dpp,
+                    slice_offset,
+                    slice_count,
+                    max_iter,
+                    (x, y) => _mask[x, y],
+                    (index, p) => _progress[index] = p,
+                    (index, incr) => _image[index]->Iterations += incr,
+                    (index) => _image[index]->Computed = true
+                );
+            else
+                RenderImageCore_Managed(
+                    batches,
+                    batch,
+                    mask_width,
+                    mask_height,
+                    i_bounds,
+                    m_bounds,
+                    image_width,
+                    image_height,
+                    dpp,
+                    slice_offset,
+                    slice_count,
+                    max_iter
+                );
+        }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = cores });
 
         for (ulong batch = 0; batch < batches; ++batch)
             block.Post(batch);
@@ -651,8 +700,14 @@ public static class Program
     }
 
 
-    [DllImport(PATH_NATIVE, CallingConvention = CallingConvention.Cdecl)]
-    private static extern unsafe void render_image_core(
+    private delegate bool mask_callback(int x, int y);
+    private delegate void progress_callback(int index, precision progress);
+    private delegate void computed_callback(ulong index);
+    private delegate void image_callback(ulong index, int increment);
+
+
+    [DllImport(PATH_NATIVE, EntryPoint = "render_image_core", CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe void RenderImageCore_Native(
         ulong batches,
         ulong batch,
         int mask_width,
@@ -665,10 +720,10 @@ public static class Program
         int slice_offset,
         int slice_count,
         int max_iter,
-        Func<int, int, bool> _mask,
-        Action<int, precision> _progress,
-        Action<ulong, int> _image,
-        Action<ulong> _computed
+        mask_callback _mask,
+        progress_callback _progress,
+        image_callback _image,
+        computed_callback _computed
     );
 
     private static void RenderImageCore_Managed(
