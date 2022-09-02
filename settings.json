@@ -11,8 +11,10 @@
 
     "native": true,
 
-    "width": 1920,
-    "height": 1584,
+    //"width": 1920,
+    //"height": 1584,
+    "width": 3840,
+    "height": 3168,
     //"width": 19200,
     //"height": 15840,
     "bounds": {
@@ -22,17 +24,17 @@
         "bottom": 1.1
     },
 
-    "max_iter": 5000,
+    "max_iter": 10000,
     "slice_offset": 0,
-    "slice_count": 1,
-    "dpp": 8,
-    "batches": 30,
+    "slice_count": 17,
+    "dpp": 64,
+    "batches": 45,
     "cores": -1,
 
     "threshold_g": 40,
     "threshold_r": 300,
     "grayscale": true,
-    "color_map": "inferno", // either "null" or the name of the color map
+    "color_map": "jet", // either "null" or the name of the color map
     "reverse_color_map": false,
 
     "report_interval_ms": 250,

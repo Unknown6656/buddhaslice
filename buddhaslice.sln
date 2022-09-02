@@ -4,6 +4,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 VisualStudioVersion = 17.4.32804.182
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "buddhaslice", "buddhaslice.csproj", "{DB58547E-457A-456E-A6CF-3049A6F7BA7A}"
+	ProjectSection(ProjectDependencies) = postProject
+		{C9A86649-59AB-4693-8957-70F1E6A3B902} = {C9A86649-59AB-4693-8957-70F1E6A3B902}
+	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "native", "D:\DEV\buddhaslice\native\native.vcxproj", "{C9A86649-59AB-4693-8957-70F1E6A3B902}"
 EndProject
