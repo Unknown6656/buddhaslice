@@ -1,6 +1,5 @@
 //#define DOUBLE_PRECISION
 
-#include<stdint.h>
 #include <stdlib.h>
 
 
@@ -16,11 +15,18 @@
 
 
 #ifdef DOUBLE_PRECISION
-typedef double precision;
+typedef double               precision;
 #else
-typedef float precision;
+typedef float                precision;
 #endif
-
+typedef signed char          i8;
+typedef short                i16;
+typedef int                  i32;
+typedef long long            i64;
+typedef unsigned char        u8;
+typedef unsigned short       u16;
+typedef unsigned int         u32;
+typedef unsigned long long   u64;
 #ifndef __cplusplus
 typedef enum { false, true } bool;
 #endif
@@ -34,17 +40,17 @@ typedef struct
     precision bottom;
 } bounds;
 
-precision bounds_width(const bounds* const b)
+static inline precision __fastcall bounds_width(const bounds* const b)
 {
     return b->right - b->left;
 }
 
-precision bounds_height(const bounds* const b)
+static inline precision __fastcall bounds_height(const bounds* const b)
 {
     return b->bottom - b->top;
 }
 
-int bounds_contains(const bounds* const b, const precision x, const precision y)
+static inline bool __fastcall bounds_contains(const bounds* const b, const precision x, const precision y)
 {
     return b->left <= x && x <= b->right && b->top <= y && y <= b->bottom;
 }
@@ -56,7 +62,7 @@ typedef struct
     precision imag;
 } complex;
 
-complex complex_mul(const complex* const c1, const complex* const c2)
+static inline complex __fastcall complex_mul(const complex* const c1, const complex* const c2)
 {
     const complex res = {
         c1->real * c2->real - c1->imag * c2->imag,
@@ -66,7 +72,7 @@ complex complex_mul(const complex* const c1, const complex* const c2)
     return res;
 }
 
-complex complex_add(const complex* const c1, const complex* const c2)
+static inline complex __fastcall complex_add(const complex* const c1, const complex* const c2)
 {
     const complex res = {
         c1->real + c2->real,
@@ -77,97 +83,102 @@ complex complex_add(const complex* const c1, const complex* const c2)
 }
 
 
-typedef bool(*mask_callback)(int32_t mask_x, int32_t mask_y);
-typedef void(*progress_callback)(int32_t batch, precision progress);
-typedef void(*image_callback)(uint64_t index, int32_t add_iterations);
-typedef void(*computed_callback)(uint64_t index);
-
-EXPORT void CALLCONV render_image_core(
-    const uint64_t batches,
-    const uint64_t batch,
-    const int32_t mask_width,
-    const int32_t mask_height,
-    const bounds* const i_bounds,
-    const bounds* const m_bounds,
-    const uint64_t image_width,
-    const uint64_t image_height,
-    const int32_t dpp,
-    const int32_t slice_offset,
-    const int32_t slice_count,
-    const int32_t max_iter,
-    const mask_callback _mask,
-    const progress_callback _progress,
-    const image_callback _image,
-    const computed_callback _computed
-) NOEXCEPT
+typedef struct
 {
-    for (uint64_t index = batch, total = image_width * image_height; index < total; index += batches)
+    const u64 batches;
+    const u64 batch;
+    const i32 mask_width;
+    const i32 mask_height;
+    const bounds* const i_bounds;
+    const bounds* const m_bounds;
+    const u64 image_width;
+    const u64 image_height;
+    const i32 dpp;
+    const i32 slice_offset;
+    const i32 slice_count;
+    const i32 max_iter;
+    bool(*const mask)(i32 mask_x, i32 mask_y);
+    void(*const progress)(i32 batch, precision progress);
+    void(*const image)(u64 index, i32 add_iterations);
+    void(*const computed)(u64 index);
+} render_args;
+
+EXPORT void CALLCONV render_image_core(const render_args* const args) NOEXCEPT
+{
+    complex* const slices = (complex*)malloc(args->slice_count * sizeof(complex));
+
+    i32 iteration_count, i, slice, px_mask, py_mask, x_dpp, y_dpp;
+    u64 x_index, y_index, px, py;
+    complex z, c;
+    bool compute;
+    precision re, im;
+
+    for (u64 index = args->batch, total = args->image_width * args->image_height; index < total; index += args->batches)
     {
-        uint64_t px = index % image_width;
-        uint64_t py = index / image_width;
+        px = index % args->image_width;
+        py = index / args->image_width;
 
-        for (int32_t x_dpp = 0; x_dpp < dpp; ++x_dpp)
-        {
-            precision re = (px * bounds_width(i_bounds) * dpp + x_dpp) / ((precision)image_width * dpp) + i_bounds->left;
-
-            for (int32_t y_dpp = 0; y_dpp < dpp; ++y_dpp)
+        if (slices)
+            for (x_dpp = 0; x_dpp < args->dpp; ++x_dpp)
             {
-                precision im = (py * bounds_height(i_bounds) * dpp + y_dpp) / ((precision)image_height * dpp) + i_bounds->top;
-                bool compute = true;
+                re = (px * bounds_width(args->i_bounds) * args->dpp + x_dpp) / ((precision)args->image_width * args->dpp) + args->i_bounds->left;
 
-                if (bounds_contains(m_bounds, re, im))
+                for (y_dpp = 0; y_dpp < args->dpp; ++y_dpp)
                 {
-                    int32_t px_mask = (int32_t)((re - m_bounds->left) / bounds_width(m_bounds) * mask_width);
-                    int32_t py_mask = (int32_t)((im - m_bounds->top) / bounds_height(m_bounds) * mask_height);
+                    im = (py * bounds_height(args->i_bounds) * args->dpp + y_dpp) / ((precision)args->image_height * args->dpp) + args->i_bounds->top;
+                    compute = true;
 
-                    compute = _mask(px_mask, py_mask);
-                }
-
-                if (compute)
-                {
-                    int32_t iteration_count = 0;
-                    complex* slices = (complex*)malloc(slice_count * sizeof(complex));
-                    complex z = { 0, 0 };
-                    complex c = { re, im };
-
-                    for (int i = 0; i < slice_count; ++i)
+                    if (bounds_contains(args->m_bounds, re, im))
                     {
-                        slices[i].real = 0;
-                        slices[i].imag = 0;
+                        px_mask = (i32)((re - args->m_bounds->left) / bounds_width(args->m_bounds) * args->mask_width);
+                        py_mask = (i32)((im - args->m_bounds->top) / bounds_height(args->m_bounds) * args->mask_height);
+                        compute = args->mask(px_mask, py_mask);
                     }
 
-                    do
+                    if (compute)
                     {
-                        z = complex_mul(&z, &z);
-                        z = complex_add(&z, &c);
+                        iteration_count = 0;
+                        z.real = 0;
+                        z.imag = 0;
+                        c.real = re;
+                        c.imag = im;
 
-                        int i = iteration_count - slice_offset;
-
-                        if (i >= 0 && i < slice_count)
-                            slices[i] = z;
-                    } while (abs(z.real) < 2 && abs(z.imag) < 2 && iteration_count++ < max_iter);
-
-                    if (iteration_count < max_iter)
-                        for (int slice = 0; slice < slice_count; ++slice)
+                        for (i = 0; i < args->slice_count; ++i)
                         {
-                            complex* q = slices + slice;
-                            uint64_t x_index = (uint64_t)((q->real - i_bounds->left) * image_width / bounds_width(i_bounds));
-                            uint64_t y_index = (uint64_t)((q->imag - i_bounds->top) * image_height / bounds_height(i_bounds));
-
-                            if (x_index >= 0 && x_index < image_width && y_index >= 0 && y_index < image_height)
-                                _image((y_index * image_width) + x_index, iteration_count - slice /* 1 */);
+                            slices[i].real = 0;
+                            slices[i].imag = 0;
                         }
 
-                    free(slices);
+                        do
+                        {
+                            z = complex_mul(&z, &z);
+                            z = complex_add(&z, &c);
+                            i = iteration_count - args->slice_offset;
+
+                            if (i >= 0 && i < args->slice_count)
+                                slices[i] = z;
+                        } while (abs(z.real) < 2 && abs(z.imag) < 2 && iteration_count++ < args->max_iter);
+
+                        if (iteration_count < args->max_iter)
+                            for (slice = 0; slice < args->slice_count; ++slice)
+                            {
+                                x_index = (u64)((slices[slice].real - args->i_bounds->left) * args->image_width / bounds_width(args->i_bounds));
+                                y_index = (u64)((slices[slice].imag - args->i_bounds->top) * args->image_height / bounds_height(args->i_bounds));
+
+                                if (x_index >= 0 && x_index < args->image_width && y_index >= 0 && y_index < args->image_height)
+                                    args->image((y_index * args->image_width) + x_index, iteration_count - slice /* 1 */);
+                            }
+                    }
                 }
+
+                args->progress(args->batch, (index * (precision)args->dpp + x_dpp) / (total * (precision)args->dpp));
             }
 
-            _progress(batch, (index * (precision)dpp + x_dpp) / (total * (precision)dpp));
-        }
-
-        _computed(index);
+        args->computed(index);
     }
 
-    _progress(batch, 1);
+    args->progress(args->batch, 1);
+
+    free(slices);
 }
 
