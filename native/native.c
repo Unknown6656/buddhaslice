@@ -1,6 +1,5 @@
 //#define DOUBLE_PRECISION
-
-#include <stdlib.h>
+#define USE_INTRINSIC_ABS
 
 
 #ifdef __cplusplus
@@ -83,6 +82,19 @@ static inline complex __fastcall complex_add(const complex* const c1, const comp
 }
 
 
+#ifndef USE_INTRINSIC_ABS
+static inline precision __abs(const precision value)
+{
+#ifdef DOUBLE_PRECISION
+    const i64 ival = *(i64* const)&value & 0x7fffffffffffffff;
+#else
+    const i32 ival = *(i32* const)&value & 0x7fffffff;
+#endif
+    return *(precision* const)&ival;
+}
+#define abs __abs
+#endif
+
 typedef struct
 {
     const u64 batches;
@@ -97,6 +109,8 @@ typedef struct
     const i32 slice_offset;
     const i32 slice_count;
     const i32 max_iter;
+    complex* const slices;
+
     bool(*const mask)(i32 mask_x, i32 mask_y);
     void(*const progress)(i32 batch, precision progress);
     void(*const image)(u64 index, i32 add_iterations);
@@ -105,8 +119,6 @@ typedef struct
 
 EXPORT void CALLCONV render_image_core(const render_args* const args) NOEXCEPT
 {
-    complex* const slices = (complex*)malloc(args->slice_count * sizeof(complex));
-
     i32 iteration_count, i, slice, px_mask, py_mask, x_dpp, y_dpp;
     u64 x_index, y_index, px, py;
     complex z, c;
@@ -118,7 +130,7 @@ EXPORT void CALLCONV render_image_core(const render_args* const args) NOEXCEPT
         px = index % args->image_width;
         py = index / args->image_width;
 
-        if (slices)
+        if (args->slices)
             for (x_dpp = 0; x_dpp < args->dpp; ++x_dpp)
             {
                 re = (px * bounds_width(args->i_bounds) * args->dpp + x_dpp) / ((precision)args->image_width * args->dpp) + args->i_bounds->left;
@@ -145,8 +157,8 @@ EXPORT void CALLCONV render_image_core(const render_args* const args) NOEXCEPT
 
                         for (i = 0; i < args->slice_count; ++i)
                         {
-                            slices[i].real = 0;
-                            slices[i].imag = 0;
+                            args->slices[i].real = 0;
+                            args->slices[i].imag = 0;
                         }
 
                         do
@@ -156,14 +168,14 @@ EXPORT void CALLCONV render_image_core(const render_args* const args) NOEXCEPT
                             i = iteration_count - args->slice_offset;
 
                             if (i >= 0 && i < args->slice_count)
-                                slices[i] = z;
+                                args->slices[i] = z;
                         } while (abs(z.real) < 2 && abs(z.imag) < 2 && iteration_count++ < args->max_iter);
 
                         if (iteration_count < args->max_iter)
                             for (slice = 0; slice < args->slice_count; ++slice)
                             {
-                                x_index = (u64)((slices[slice].real - args->i_bounds->left) * args->image_width / bounds_width(args->i_bounds));
-                                y_index = (u64)((slices[slice].imag - args->i_bounds->top) * args->image_height / bounds_height(args->i_bounds));
+                                x_index = (u64)((args->slices[slice].real - args->i_bounds->left) * args->image_width / bounds_width(args->i_bounds));
+                                y_index = (u64)((args->slices[slice].imag - args->i_bounds->top) * args->image_height / bounds_height(args->i_bounds));
 
                                 if (x_index >= 0 && x_index < args->image_width && y_index >= 0 && y_index < args->image_height)
                                     args->image((y_index * args->image_width) + x_index, iteration_count - slice /* 1 */);
@@ -178,7 +190,5 @@ EXPORT void CALLCONV render_image_core(const render_args* const args) NOEXCEPT
     }
 
     args->progress(args->batch, 1);
-
-    free(slices);
 }
 
