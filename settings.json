@@ -9,12 +9,10 @@
         }
     },
 
-    "native": true,
-
-    //"width": 1920,
-    //"height": 1584,
-    "width": 3840,
-    "height": 3168,
+    "width": 1920,
+    "height": 1584,
+    //"width": 3840,
+    //"height": 3168,
     //"width": 19200,
     //"height": 15840,
     "bounds": {
@@ -24,18 +22,24 @@
         "bottom": 1.1
     },
 
-    "max_iter": 10000,
+    "max_iter": 3000,
     "slice_offset": 0,
-    "slice_count": 17,
-    "dpp": 64,
-    "batches": 45,
+    "slice_count": 20,
+    "dpp": 16,
+    "batches": 15,
     "cores": -1,
+    "native": true,
 
-    "threshold_g": 40,
-    "threshold_r": 300,
-    "grayscale": true,
-    "color_map": "jet", // either "null" or the name of the color map
-    "reverse_color_map": false,
+    "coloring": {
+        // mode can be "legacy" (0), "grayscale" (1), or "color_map" (2)
+        "mode": 2,
+        "legacy_threshold_g": 30,
+        "legacy_threshold_r": 300,
+        "color_map": "Terrain",
+        "color_map_start": 0,
+        "color_map_end": 1,
+        "amplification": 2
+    },
 
     "report_interval_ms": 250,
     "export": {

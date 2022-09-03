@@ -11,9 +11,9 @@ global using precision = System.Single;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
-using System.Collections.Concurrent;
 using System.Threading.Tasks.Dataflow;
 using System.Threading.Tasks;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
 using System.Drawing.Imaging;
@@ -33,6 +33,7 @@ using Unknown6656.Common;
 using Unknown6656.IO;
 
 using ColorMap = Unknown6656.Imaging.ColorMap;
+using System.Xml.Linq;
 
 namespace buddhaslice;
 
@@ -51,14 +52,15 @@ public static class Program
     public const string PATH_NATIVE = "native.dll";
 
     public static Settings Settings { get; private set; }
-
-    private static ConcurrentQueue<(string name, bool finished)> _queue_rendered = new();
     private static ExecutionDataflowBlockOptions? _options;
+
+    private static readonly List<(DateTime time, string message)> _log_messages = new();
 
     // indexing: [y * WIDTH + x]
     private static BigFuckingAllocator<PIXEL> _image;
     private static precision[] _progress;
     private static bool[,] _mask;
+    private static ColorMap? _map;
     private static bool _isrunning = true;
 
 
@@ -86,14 +88,24 @@ public static class Program
 
         AppDomain.CurrentDomain.ProcessExit += (_, e) => exit();
 
+        Task? _reporter = null;
+        void stop()
+        {
+            _isrunning = false;
+            _reporter?.GetAwaiter().GetResult();
+            _reporter?.Dispose();
+        }
+
         try
         {
+            Log("Application started.");
             LoadSettings();
 
-            Task _reporter = Task.Factory.StartNew(ProgressReporterTask);
+            _reporter = Task.Factory.StartNew(ProgressReporterTask);
 
             InitializeMaskAndImage();
             WarmUpMethods();
+            Log("Started rendering...");
             RenderImage();
 
             unsafe
@@ -104,14 +116,12 @@ public static class Program
             }
 
             SaveSnapshot(true);
-
-            _isrunning = false;
-            _reporter.GetAwaiter().GetResult();
+            stop();
         }
         catch (Exception? ex)
         when (!Debugger.IsAttached)
         {
-            _isrunning = false;
+            stop();
 
             StringBuilder sb = new();
 
@@ -132,9 +142,12 @@ public static class Program
         exit();
     }
 
+    private static void Log(this string message) => _log_messages.Add((DateTime.Now, message));
+
     private static async Task ProgressReporterTask()
     {
         const int WIDTH = 180;
+        const int ALIGN = 40;
 
         Console.Title = "BUDDHASLICE - by Unknown6656";
         Console.OutputEncoding = Encoding.UTF8;
@@ -145,40 +158,37 @@ public static class Program
         Console.BufferWidth = Math.Max(WIDTH, Console.BufferWidth);
         Console.WindowWidth = Math.Max(WIDTH, Console.WindowWidth);
         Console.BufferHeight = Math.Max(WIDTH * 2, Console.BufferHeight);
-        Console.WindowHeight = Math.Max(WIDTH / 3, Console.WindowHeight);
+        Console.WindowHeight = Math.Max(WIDTH / 4, Console.WindowHeight);
         Console.WriteLine(new string('═', WIDTH));
 
         int top_progress = Console.CursorTop;
-        int left_progress = WIDTH / 2 + 2;
-        const int ALIGN = 30;
+        int left_progress = WIDTH / 2 + 1;
+        ulong total_cops = Settings.height * Settings.width * (ulong)(Settings.dpp * Settings.dpp * (Settings.max_iter + Settings.slice_offset) * Settings.slice_count);
 
         Console.ForegroundColor = ConsoleColor.White;
         Console.WriteLine($"""
-            RENDER CONFIGURATION:
-                WIDTH:                {Settings.width,ALIGN:N0} px
-                HEIGHT:               {Settings.height,ALIGN:N0} px
-                TOTAL PIXELS:         {Settings.height * Settings.width,ALIGN:N0} px
-                TOTAL COMPLEX OPS:    {Settings.height * Settings.width * (ulong)(Settings.dpp * Settings.dpp * (Settings.max_iter + Settings.slice_offset) * Settings.slice_count),ALIGN:N0} c.ops
-                COMPUTATION ENGINE:   {(Settings.native ? "native (C, MSVC)" : "managed (C#, .NET)"),ALIGN}
-                FLOAT SIZE:           {sizeof(precision),ALIGN} B ({(sizeof(precision) == sizeof(float) ? "single" : "double")} precision)
-                ITERATIONS:           {Settings.max_iter,ALIGN:N0}
-                PIXELS PER THREAD:    {Settings.height * Settings.width / (ulong)Settings.batches,ALIGN:N0} px
-                BATCHES:              {Settings.batches,ALIGN}
-                THREADS:              {Environment.ProcessorCount - 1,ALIGN} (+ 1)
-                DPP:                  {Settings.dpp,ALIGN}
-                SLICE LEVELS:         {$"{Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}",ALIGN}
-                SNAPSHOT INTERVAL:    {Settings.export.interval_ms / 1000d,ALIGN} s
-                MAX. IMAGE SIZE:      {Settings.export.max_image_size,ALIGN:N0} px
-                MASK PATH:            {'"' + Settings.mask.path,ALIGN}"
-                OUTPUT PNG PATH:      {'"' + Settings.export.path_png,ALIGN}"
-                OUTPUT RAW PATH:      {'"' + Settings.export.path_raw,ALIGN}"
-                EXPORT PNG:           {Settings.export.png,ALIGN}
-                EXPORT RAW:           {Settings.export.raw,ALIGN}
-                EXPORT RAW AT END:    {Settings.export.raw_at_end,ALIGN}
-                THRESHOLD B -> G:     {(Settings.grayscale ? "[mapped] " : "") + Settings.threshold_g,ALIGN}
-                THRESHOLD G -> R:     {(Settings.grayscale ? "[mapped] " : "") + Settings.threshold_r,ALIGN}
-                GRAYSCALE:            {(Settings.grayscale ? "[mapped] " : "") + Settings.grayscale,ALIGN}
-                COLOR MAP:            {(Settings.grayscale ? "" : "[manual] ") + Settings.color_map,ALIGN}
+         RENDER CONFIGURATION:
+           WIDTH:                {Settings.width,ALIGN:N0} px
+           HEIGHT:               {Settings.height,ALIGN:N0} px
+           TOTAL PIXELS:         {Settings.height * Settings.width,ALIGN:N0} px
+           TOTAL COMPLEX OPS:    {total_cops,ALIGN:N0} c.ops
+           COMPUTATION ENGINE:   {(Settings.native ? "native (C, MSVC)" : "managed (C#, .NET)"),ALIGN}
+           FLOAT SIZE:           {sizeof(precision),ALIGN} B ({(sizeof(precision) == sizeof(float) ? "single" : "double")} precision)
+           ITERATIONS:           {Settings.max_iter,ALIGN:N0}
+           PIXELS PER THREAD:    {Settings.height * Settings.width / (ulong)Settings.batches,ALIGN:N0} px
+           BATCHES:              {Settings.batches,ALIGN}
+           THREADS:              {Environment.ProcessorCount - 1,ALIGN} (+ 1)
+           DPP:                  {Settings.dpp,ALIGN}
+           SLICE LEVELS:         {$"{Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}",ALIGN}
+           SNAPSHOT INTERVAL:    {Settings.export.interval_ms / 1000d,ALIGN} s
+           MAX. IMAGE SIZE:      {Settings.export.max_image_size,ALIGN:N0} px
+           MASK PATH:            {'"' + Settings.mask.path,ALIGN}"
+           OUTPUT PNG PATH:      {'"' + Settings.export.path_png,ALIGN}"
+           OUTPUT RAW PATH:      {'"' + Settings.export.path_raw,ALIGN}"
+           EXPORT PNG:           {Settings.export.png,ALIGN}
+           EXPORT RAW:           {Settings.export.raw,ALIGN}
+           EXPORT RAW AT END:    {Settings.export.raw_at_end,ALIGN}
+           COLORING:             {Settings.coloring,ALIGN}
         """);
 
         int bottom_progress = Console.CursorTop;
@@ -191,21 +201,22 @@ public static class Program
 
         (int progress_text_width, int system_counters_top) = ConsoleExtensions.WriteBlock("""
         CURRENT PROGRESS:
-            START TIME:
-            CURRENT TIME:
-            ELAPSED TIME:
-            REMAINING TIME (ESTIMATED):
-            TOTAL PROGRESS:
-            PROGRESS SPEED:
-            IMAGE SIZE:
-            PXIELS WRITTEN:
-            CURRENT SPEED:
+          START TIME:
+          CURRENT TIME:
+          ELAPSED TIME:
+          REMAINING TIME (ESTIMATED):
+          TOTAL PROGRESS:
+          PROGRESS SPEED:
+          IMAGE SIZE:
+          PXIELS WRITTEN:
+          CURRENT SPEED:
 
-            CURRENT MEMORY FOOTPRINT:
-            MAXIMUM MEMORY FOOTPRINT:
-            FREE SYSTEM MEMORY:
-            TOTAL SYSTEM MEMORY:
-            CPU USAGE (GLOBAL):
+          OVERALL COMPUTATION SPEED:
+          CURRENT MEMORY FOOTPRINT:
+          MAXIMUM MEMORY FOOTPRINT:
+          FREE SYSTEM MEMORY:
+          TOTAL SYSTEM MEMORY:
+          CPU USAGE (GLOBAL):
         """, (left_progress, top_progress));
 
         top_progress += 2;
@@ -222,14 +233,14 @@ public static class Program
         Console.Write(new string('═', WIDTH));
         Console.CursorLeft = WIDTH / 2 - 1;
         Console.WriteLine('╩');
-        Console.WriteLine("  BATCHES / THREADS:");
+        Console.WriteLine(" BATCHES:");
 
         const int threads_per_row = 3;
 
         int top_threads = Console.CursorTop;
         int threads_b10 = (int)Math.Ceiling(Math.Log10(Settings.batches));
-        int threads_label_sz = 4 + threads_b10;
-        int threads_size = (WIDTH - 6) / threads_per_row - threads_label_sz;
+        int threads_label_sz = 5 + threads_b10;
+        int threads_size = (WIDTH - 4) / threads_per_row - threads_label_sz;
 
         (int left, int top, int padding) get_thread_pos(int rank)
         {
@@ -241,7 +252,7 @@ public static class Program
                 );
             else
                 return (
-                    7 + threads_b10 + (rank % threads_per_row) * (threads_size + 3),
+                    6 + threads_b10 + (rank % threads_per_row) * (threads_size + 3),
                     top_threads + rank / threads_per_row,
                     threads_size - threads_label_sz - 14
                 );
@@ -261,7 +272,7 @@ public static class Program
         Console.ForegroundColor = ConsoleColor.Gray;
         Console.WriteLine('\n' + new string('═', WIDTH));
         Console.ForegroundColor = ConsoleColor.White;
-        Console.WriteLine("  EXPORTED DATA:");
+        Console.WriteLine(" MESSAGE LOG (NEWEST FIRST):");
 
         int top_exports = Console.CursorTop;
 
@@ -284,6 +295,39 @@ public static class Program
         using PerformanceCounter perf_cpu_glob = new("Processor", "% Processor Time", "_Total");
         using PerformanceCounter perf_cpu = new("Process", "% Processor Time", Process.GetCurrentProcess().ProcessName);
 
+        Log("Logger service started.");
+
+        int last_msg_count = 0;
+        void print_msgs()
+        {
+            if (last_msg_count != _log_messages.Count)
+            {
+                last_msg_count = _log_messages.Count;
+
+                Console.CursorTop = top_exports;
+
+                foreach ((DateTime time, string message) in _log_messages.Reverse<(DateTime, string)>())
+                {
+                    Console.CursorLeft = 6;
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.Write($"[{time:HH:mm:ss.fff}] ");
+                    Console.ForegroundColor = ConsoleColor.White;
+
+                    bool first = true;
+
+                    foreach (string line in message.SplitIntoLines())
+                    {
+                        if (first)
+                            Console.CursorLeft = 21;
+
+                        Console.WriteLine(line.PadRight(WIDTH - 21));
+
+                        first = false;
+                    }
+                }
+            }
+        }
+
         do
             try
             {
@@ -291,15 +335,6 @@ public static class Program
                 {
                     sw_save.Stop();
                     sw_save.Reset();
-
-                    Console.CursorLeft = 6;
-                    Console.CursorTop = top_exports;
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.Write($"[{DateTime.Now:HH:mm:ss.fff}] ");
-                    Console.ForegroundColor = ConsoleColor.White;
-                    Console.Write($"Saving snapshot ...");
-
-                    ++top_exports;
 
                     _ = Task.Factory.StartNew(() =>
                     {
@@ -329,6 +364,7 @@ public static class Program
                                    {progr * Settings.height * Settings.width,11:N0} px
                                    {pixels_per_sec * sizeof(precision) / 341.333,11:N0} kB/s
                                    {pixels_per_sec,11:N0} px/s
+                          {total_cops * progr / elapsed.TotalSeconds * .000001,20:N2} M c.ops/s
                                    {mem / 1048576d,11:N2} MB  ({mem * 100d / max_mem,6:N2} %)
                                    {max_mem / 1048576d,11:N2} MB
                                    {perf_mem_avail.NextValue(),11:N2} MB  ({perf_mem_avail.NextValue() / perf_mem_glob * 100,6:N2} %)
@@ -391,28 +427,9 @@ public static class Program
                         }
                     }
 
-                    while (_queue_rendered.TryDequeue(out (string file, bool finished) export))
+                    if (!fin && progr >= 1)
                     {
-                        Console.CursorLeft = 6;
-                        Console.CursorTop = top_exports;
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.Write($"[{DateTime.Now:HH:mm:ss.fff}] ");
-                        Console.ForegroundColor = ConsoleColor.White;
-                        Console.Write($"{(export.finished ? "Finished" : "Began")} exporting '{export.file}'.");
-
-                        ++top_exports;
-                    }
-
-                    if (!fin && progr == 1)
-                    {
-                        Console.CursorLeft = 6;
-                        Console.CursorTop = top_exports;
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.Write($"[{DateTime.Now:HH:mm:ss.fff}] ");
-                        Console.ForegroundColor = ConsoleColor.White;
-                        Console.Write("Finished rendering. Saving final result ...");
-
-                        ++top_exports;
+                        Log("Finished rendering. Saving final result ...");
 
                         fin = true;
                     }
@@ -420,6 +437,8 @@ public static class Program
                     oldp = progr;
 
                     sw_report.Restart();
+
+                    print_msgs();
                 }
                 else
                     await Task.Delay(Settings.report_interval_ms / 3);
@@ -430,19 +449,11 @@ public static class Program
             }
         while (_isrunning);
 
-        Console.CursorLeft = 0;
-        Console.CursorTop = top_exports;
-        Console.ForegroundColor = ConsoleColor.Gray;
-        Console.WriteLine(new string('═', WIDTH));
-        Console.CursorTop++;
-
         sw_total.Stop();
 
-        Console.ForegroundColor = ConsoleColor.White;
-        Console.WriteLine($"     TOTAL RENDER TIME: {sw_total.Elapsed:dd':'hh':'mm':'ss'.'fff}\n");
-        Console.ForegroundColor = ConsoleColor.Gray;
-        Console.WriteLine(new string('═', WIDTH));
-        Console.CursorTop++;
+        Log($"FINISHED. TOTAL RENDER TIME: {sw_total.Elapsed:dd':'hh':'mm':'ss'.'fff}");
+
+        print_msgs();
     }
 
     private static void WarmUpMethods()
@@ -463,27 +474,40 @@ public static class Program
 
     private static void LoadSettings()
     {
-        Console.ForegroundColor = ConsoleColor.White;
-        Console.WriteLine("Loading settings...");
+        Log($"Loading settings from '{PATH_CONFIG}'...");
 
         try
         {
             Settings = DataStream.FromFile(PATH_CONFIG).ToJSON<Settings>();
 
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("Settings loaded.");
+            Log("Settings successfully loaded.");
         }
         catch
         {
             Settings = Settings.DefaultSettings;
 
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("An error occured. The default settings have been loaded.");
+            Log("An error occured during the loading of settings. The default settings have been loaded.");
         }
-        finally
+
+        _progress = new precision[Settings.batches];
+
+        if (Settings.coloring.mode is ColoringMode.grayscale)
+            _map = new ContinuousColorMap(x => new RGBAColor(x, 1.0));
+        else if (Settings.coloring.mode is ColoringMode.color_map)
         {
-            _progress = new precision[Settings.batches];
+            PropertyInfo? property = typeof(ColorMap).GetProperties(BindingFlags.Public | BindingFlags.Static)
+                                                     .FirstOrDefault(p => p.Name.Equals(Settings.coloring.color_map, StringComparison.InvariantCultureIgnoreCase));
+
+            if (property?.GetValue(null) is ColorMap map)
+            {
+                double end = Settings.coloring.color_map_end;
+                double start = Settings.coloring.color_map_start;
+
+                _map = new ContinuousColorMap(x => map[x * (end - start) + start]);
+            }
         }
+        else if (Settings.coloring.mode is ColoringMode.legacy)
+            _map = null;
     }
 
     private static unsafe void InitializeMaskAndImage()
@@ -516,11 +540,15 @@ public static class Program
 
     private static void SaveSnapshot(bool final)
     {
+        Log("Saving snapshot...");
+
         if (final ? Settings.export.raw_at_end : Settings.export.raw)
             SaveRaw();
 
         if (final || Settings.export.png)
             SaveTiledPNG();
+
+        Log("Snapshot saved.");
     }
 
     private static void SaveTiledPNG()
@@ -530,49 +558,39 @@ public static class Program
         while (Settings.width * Settings.height / (ulong)(tiles * tiles) > (ulong)Settings.export.max_image_size)
             ++tiles;
 
+        if (tiles > 1)
+            Log($"Saving {tiles * tiles} bitmap tiles...");
+
         Bitmap[,] bmp = ComputeTiles(tiles);
-        Colorize? fx = null;
-
-        if (Settings.grayscale && Settings.color_map is string name)
-        {
-            PropertyInfo? property = typeof(ColorMap).GetProperties(BindingFlags.Public | BindingFlags.Static)
-                                                     .FirstOrDefault(p => p.Name.Equals(name, StringComparison.InvariantCultureIgnoreCase));
-
-            if (property?.GetValue(null) is ColorMap map)
-                fx = new(Settings.reverse_color_map ? map.Reverse() : map);
-        }
+        Colorize fx;
 
         for (int x = 0; x < tiles; ++x)
             for (int y = 0; y < tiles; ++y)
             {
                 string path = string.Format(Settings.export.path_png, x, y);
-                Bitmap b = bmp[x, y];
+                using Bitmap b = bmp[x, y];
 
-                using (b = fx?.ApplyTo(b) ?? b)
-                {
-                    SetExifData(b, 0x0131, "Buddhaslice by Unknown6656");
-                    SetExifData(b, 0x013b, "Unknown6656");
-                    SetExifData(b, 0x8298, $"Copyright (c) 2019-{DateTime.UtcNow.Year}, Unknown6656");
-                    SetExifData(b, 0x010e, $"""
-                    WIDTH:               {Settings.width:N0} px
-                    HEIGHT:              {Settings.height:N0} px
-                    ITERATIONS:          {Settings.max_iter:N0}
-                    BATCHES:             {Settings.batches}
-                    CORES:               {Environment.ProcessorCount}
-                    DPP:                 {Settings.dpp}
-                    SLICE LEVELS:        {Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}
-                    TILE (X, Y):         ({x}, {y})
-                    TILE WIDTH:          {b.Width}
-                    TILE HEIGHT:         {b.Height}
-                    MASK PATH:           "{Settings.mask.path}"
-                    THRESHOLD B -> G:    {Settings.threshold_r}
-                    THRESHOLD G -> R:    {Settings.threshold_g}
-                    SAVING TIME (LOCAL): {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}
-                    """);
-                    b.Save(path, ImageFormat.Png);
-                }
+                SetExifData(b, 0x0131, "Buddhaslice by Unknown6656");
+                SetExifData(b, 0x013b, "Unknown6656");
+                SetExifData(b, 0x8298, $"Copyright (c) 2019-{DateTime.UtcNow.Year}, Unknown6656");
+                SetExifData(b, 0x010e, $"""
+                WIDTH:         {Settings.width:N0} px
+                HEIGHT:        {Settings.height:N0} px
+                ITERATIONS:    {Settings.max_iter:N0}
+                BATCHES:       {Settings.batches}
+                CORES:         {Environment.ProcessorCount}
+                DPP:           {Settings.dpp}
+                SLICE LEVELS:  {Settings.slice_offset}...{Settings.slice_offset + Settings.slice_count}
+                TILE (X, Y):   ({x}, {y})
+                TILE WIDTH:    {b.Width}
+                TILE HEIGHT:   {b.Height}
+                MASK PATH:     "{Settings.mask.path}"
+                COLORING:      {Settings.coloring}
+                SAVING TIME:   {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}
+                """);
+                b.Save(path, ImageFormat.Png);
 
-                _queue_rendered.Enqueue((path, true));
+                Log($"Saved bitmap tile to '{path}'.");
             }
     }
 
@@ -591,7 +609,7 @@ public static class Program
 
     private static unsafe void SaveRaw()
     {
-        _queue_rendered.Enqueue((Settings.export.path_raw, false));
+        Log($"Saving memory dump to '{Settings.export.path_raw}'...");
 
         using FileStream fs = new(Settings.export.path_raw, FileMode.Create, FileAccess.Write, FileShare.Read);
         using BinaryWriter wr = new(fs);
@@ -611,7 +629,7 @@ public static class Program
         fs.Flush();
         fs.Close();
 
-        _queue_rendered.Enqueue((Settings.export.path_raw, true));
+        Log($"Finished saving memory dump to '{Settings.export.path_raw}'...");
     }
 
     #endregion
@@ -635,30 +653,28 @@ public static class Program
 
         stddev = (precision)Math.Sqrt(stddev / _image.ItemCount);
 
-        precision norm_factor = 1 / (precision)(mean + stddev);
+        return tiler.GenerateTiles(tilecount, tilecount, (int)Settings.width, (int)Settings.height, Settings.coloring.amplification / (mean + stddev));
 
-        return tiler.GenerateTiles(tilecount, tilecount, (int)Settings.width, (int)Settings.height, norm_factor);
         static uint PixelTranslator(PIXEL* pixel, precision norm_factor)
         {
             precision iterations = pixel->Iterations * norm_factor;
+            RGBAColor color;
 
             if (iterations > 1)
                 iterations = 1;
             else if (!(iterations > 0))
                 iterations = 0;
 
-            precision b = Math.Min(iterations - 5 * norm_factor, Settings.threshold_g);
-            precision g = Math.Min(iterations, Settings.threshold_r) - Settings.threshold_g;
-            precision r = iterations - Settings.threshold_r - Settings.threshold_g;
-            static uint to_byte(double value) => value < 0 ? 0u : value > 1 ? 255u : (uint)(value * 255);
+            if (Settings.coloring.mode is ColoringMode.legacy)
+                color = new(
+                    iterations - Settings.coloring.legacy_threshold_r - Settings.coloring.legacy_threshold_g,
+                    Math.Min(iterations, Settings.coloring.legacy_threshold_r) - Settings.coloring.legacy_threshold_g,
+                    Math.Min(iterations - 5 * norm_factor, Settings.coloring.legacy_threshold_g)
+                );
+            else
+                color = _map?[iterations] ?? new(iterations, 1.0);
 
-            if (Settings.grayscale)
-                r = g = b = iterations;
-
-            return 0xff000000u
-                 | (to_byte(r) << 16)
-                 | (to_byte(g) << 8)
-                 | to_byte(b);
+            return color.ARGBu;
         }
     }
 
@@ -686,6 +702,7 @@ public static class Program
         {
             Bounds i_bounds = Settings.bounds;
             Bounds m_bounds = Settings.mask.bounds;
+
             render_args args = new()
             {
                 batches = batches,
@@ -700,6 +717,7 @@ public static class Program
                 slice_offset = slice_offset,
                 slice_count = slice_count,
                 max_iter = max_iter,
+                slices = ((precision, precision)*)Marshal.AllocHGlobal(sizeof(precision) * 2 * slice_count),
                 mask = static (x, y) => _mask[x, y],
                 progress = static (index, p) => _progress[index] = p,
                 image = static (index, incr) => _image[index]->Iterations += incr,
@@ -710,6 +728,8 @@ public static class Program
                 RenderImageCore_Native(ref args);
             else
                 RenderImageCore_Managed(args);
+
+            Marshal.FreeHGlobal((nint)args.slices);
         }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = cores });
 
         for (ulong batch = 0; batch < batches; ++batch)
@@ -797,12 +817,14 @@ internal unsafe struct render_args
     public int slice_offset;
     public int slice_count;
     public int max_iter;
+    public (precision real, precision imag)* slices;
     public mask_callback mask;
     public progress_callback progress;
     public image_callback image;
     public computed_callback computed;
 
-
+    public delegate precision* malloc_callback(int count);
+    public delegate void free_callback(void* pointer);
     public delegate bool mask_callback(int x, int y);
     public delegate void progress_callback(int index, precision progress);
     public delegate void computed_callback(ulong index);
